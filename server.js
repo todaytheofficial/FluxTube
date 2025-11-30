@@ -17,28 +17,23 @@ const io = socketIo(server);
 const PORT = 3000;
 const DB_PATH = './database/video_hosting.db';
 const UPLOADS_PATH = path.join(__dirname, 'uploads');
-
-// Устанавливаем длительный срок действия куки для постоянной авторизации (7 дней)
-const COOKIE_MAX_AGE = 1000 * 60 * 60 * 24 * 7; 
+const COOKIE_MAX_AGE = 1000 * 60 * 60 * 24 * 7; // 7 дней для постоянной авторизации
 
 // --- НАСТРОЙКА Express и ЛИМИТОВ ---
-// Увеличиваем лимит размера тела запроса до 50MB для приема больших видеофайлов
+// ✅ КРИТИЧЕСКИ ВАЖНО для req.body: эти миддлвары должны стоять в самом начале!
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(cookieParser());
 
 // --- АВТОМАТИЧЕСКОЕ СОЗДАНИЕ ПАПОК ---
-
-// Проверяем и создаем папку database
 const dbDir = path.dirname(DB_PATH);
 if (!fs.existsSync(dbDir)){
     fs.mkdirSync(dbDir);
     console.log('Папка database создана.');
 }
-
-// Проверяем и создаем папку uploads
-if (!fs.existsSync(UPLOADS_PATH)){
-    fs.mkdirSync(UPLOADS_PATH);
+const UPLOADS_DIR = path.join(__dirname, 'uploads');
+if (!fs.existsSync(UPLOADS_DIR)){
+    fs.mkdirSync(UPLOADS_DIR);
     console.log('Папка uploads создана.');
 }
 
@@ -91,6 +86,16 @@ db.serialize(() => {
         text TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
+
+    // Подписки
+    db.run(`CREATE TABLE IF NOT EXISTS subscriptions (
+        subscriber_id INTEGER,
+        channel_id INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (subscriber_id, channel_id),
+        FOREIGN KEY(subscriber_id) REFERENCES users(id),
+        FOREIGN KEY(channel_id) REFERENCES users(id)
+    )`);
 });
 
 // --- НАСТРОЙКА MULTER ДЛЯ ЗАГРУЗКИ ---
@@ -112,7 +117,8 @@ const checkAuth = (req, res, next) => {
 
 // Регистрация
 app.post('/api/register', upload.single('avatar'), async (req, res) => {
-    const { username, password } = req.body;
+    // req.body заполняется Multer'ом для multipart/form-data
+    const { username, password } = req.body; 
     const avatar = req.file ? `/uploads/${req.file.filename}` : '/img/default_avatar.svg';
     
     if(!username || !password) return res.json({success: false, message: "Заполните поля"});
@@ -123,11 +129,9 @@ app.post('/api/register', upload.single('avatar'), async (req, res) => {
         [username, hash, avatar], 
         function(err) {
             if (err) {
-                // Если ошибка (например, UNIQUE constraint), удаляем загруженный аватар
                 if (req.file) fs.unlink(req.file.path, () => {});
                 return res.json({ success: false, message: "Пользователь с таким именем уже существует" });
             }
-            // Установка куки с MaxAge для сохранения аккаунта
             res.cookie('user_id', this.lastID, { httpOnly: true, maxAge: COOKIE_MAX_AGE });
             res.json({ success: true, user_id: this.lastID });
         }
@@ -136,16 +140,46 @@ app.post('/api/register', upload.single('avatar'), async (req, res) => {
 
 // Вход
 app.post('/api/login', (req, res) => {
+    // req.body заполняется express.json/urlencoded
     const { username, password } = req.body;
     db.get(`SELECT * FROM users WHERE username = ?`, [username], async (err, user) => {
         if (!user || !(await bcrypt.compare(password, user.password))) {
             return res.json({ success: false, message: "Неверный логин или пароль" });
         }
-        // Установка куки с MaxAge для сохранения аккаунта
         res.cookie('user_id', user.id, { httpOnly: true, maxAge: COOKIE_MAX_AGE });
         res.json({ success: true, user: user });
     });
 });
+
+// Подписка/Отписка
+app.post('/api/subscribe', checkAuth, (req, res) => {
+    const { channelId } = req.body;
+    const subscriberId = req.userId;
+
+    if (parseInt(subscriberId) === parseInt(channelId)) {
+        return res.json({ success: false, message: "Нельзя подписаться на себя." });
+    }
+
+    db.get(`SELECT * FROM subscriptions WHERE subscriber_id = ? AND channel_id = ?`, 
+        [subscriberId, channelId], 
+        (err, row) => {
+            if (row) {
+                // Отписка
+                db.run(`DELETE FROM subscriptions WHERE subscriber_id = ? AND channel_id = ?`, 
+                    [subscriberId, channelId], 
+                    () => res.json({ success: true, is_subscribed: false })
+                );
+            } else {
+                // Подписка
+                db.run(`INSERT INTO subscriptions (subscriber_id, channel_id) VALUES (?, ?)`, 
+                    [subscriberId, channelId], 
+                    () => res.json({ success: true, is_subscribed: true })
+                );
+            }
+        }
+    );
+});
+
 
 // Получение текущего пользователя
 app.get('/api/me', checkAuth, (req, res) => {
@@ -168,7 +202,6 @@ app.post('/api/upload', checkAuth, upload.fields([{ name: 'video', maxCount: 1 }
     const { title, description } = req.body;
     
     if (!req.files || !req.files['video'] || !req.files['thumbnail']) {
-        console.error("Multer: Отсутствует видео или обложка.");
         return res.status(400).json({ success: false, message: "Отсутствует видео или обложка." });
     }
 
@@ -179,14 +212,10 @@ app.post('/api/upload', checkAuth, upload.fields([{ name: 'video', maxCount: 1 }
         [req.userId, title, description, `/uploads/${videoFile}`, `/uploads/${thumbFile}`],
         function(err) {
             if(err) {
-                console.error("КРИТИЧЕСКАЯ ОШИБКА БД ПРИ ЗАГРУЗКЕ ВИДЕО:", err);
-                // Если ошибка в БД, удаляем загруженные файлы
                 fs.unlink(path.join(UPLOADS_PATH, videoFile), () => {});
                 fs.unlink(path.join(UPLOADS_PATH, thumbFile), () => {});
-                
                 return res.status(500).json({success: false, message: "Ошибка базы данных при сохранении видео."});
             }
-            // Уведомляем всех через Socket.io о новом видео
             io.emit('new_video', { id: this.lastID, title, thumbnail: `/uploads/${thumbFile}` });
             res.json({ success: true });
         }
@@ -202,48 +231,72 @@ app.get('/api/videos', (req, res) => {
     });
 });
 
-// Данные одного видео
+// Данные одного видео (с подписчиками и статусом подписки)
 app.get('/api/video/:id', (req, res) => {
     const videoId = req.params.id;
+    const currentUserId = req.cookies.user_id || 0; 
     
-    // --- ВАЖНО: Накрутка просмотров ---
-    // В MVP мы просто увеличиваем счетчик. Для предотвращения накрутки 
-    // нужно добавить логику проверки IP или куки пользователя (см. предыдущий ответ).
     db.run(`UPDATE videos SET views = views + 1 WHERE id = ?`, [videoId]);
     
-    // Получаем данные
     const query = `
         SELECT v.*, u.username, u.avatar as author_avatar, u.id as author_id,
         (SELECT COUNT(*) FROM votes WHERE video_id = v.id AND type = 'like') as likes,
-        (SELECT COUNT(*) FROM votes WHERE video_id = v.id AND type = 'dislike') as dislikes
+        (SELECT COUNT(*) FROM votes WHERE video_id = v.id AND type = 'dislike') as dislikes,
+        (SELECT COUNT(*) FROM subscriptions WHERE channel_id = u.id) as subscriber_count,
+        (SELECT COUNT(*) FROM subscriptions WHERE subscriber_id = ? AND channel_id = u.id) as is_subscribed
         FROM videos v 
         JOIN users u ON v.author_id = u.id
         WHERE v.id = ?
     `;
     
-    db.get(query, [videoId], (err, video) => {
+    db.get(query, [currentUserId, videoId], (err, video) => {
         if(err || !video) return res.status(404).json({error: "Video not found"});
         
-        // Получаем комментарии
         db.all(`SELECT c.*, u.username, u.avatar FROM comments c 
                 JOIN users u ON c.user_id = u.id 
                 WHERE video_id = ? ORDER BY c.created_at DESC`, [videoId], (err, comments) => {
             res.json({ video, comments });
-            
-            // Обновляем счетчик просмотров в реальном времени
             io.emit('update_view_count', { videoId, views: video.views + 1 });
         });
     });
 });
 
-// --- URL Routing для SPA ---
-app.get('/:channelName/:channelId', (req, res) => {
+// Данные канала (для страницы канала)
+app.get('/api/channel/:id', (req, res) => {
+    const channelId = req.params.id;
+    const currentUserId = req.cookies.user_id || 0;
+
+    const channelQuery = `
+        SELECT id, username, avatar, created_at,
+        (SELECT COUNT(*) FROM subscriptions WHERE channel_id = id) as subscriber_count,
+        (SELECT COUNT(*) FROM subscriptions WHERE subscriber_id = ? AND channel_id = id) as is_subscribed
+        FROM users WHERE id = ?
+    `;
+
+    db.get(channelQuery, [currentUserId, channelId], (err, channel) => {
+        if (err || !channel) return res.status(404).json({ error: "Channel not found" });
+
+        // Получаем видео этого канала
+        db.all(`SELECT * FROM videos WHERE author_id = ? ORDER BY created_at DESC`, [channelId], (err, videos) => {
+            res.json({ channel, videos });
+        });
+    });
+});
+
+
+// --- URL Routing для SPA (Single Page Application) ---
+app.get('/channel/:id', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 app.get('/watch/:id', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
+
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
 
 // --- SOCKET.IO REALTIME ---
 io.on('connection', (socket) => {

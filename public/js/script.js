@@ -17,7 +17,6 @@ const app = {
     init: () => {
         app.checkUserStatus();
         app.setupSocketListeners();
-        // В зависимости от URL, загружаем контент
         app.route(); 
         
         // Настройка прослушивания событий модальных окон
@@ -31,8 +30,7 @@ const app = {
             app.loadFeed();
         } else if (path[0] === 'watch' && path[1]) {
             app.loadVideoPage(path[1]);
-        } else if (path.length === 2 && path[0] !== 'api' && path[1]) {
-            // Предполагаем, что это /username/userId
+        } else if (path[0] === 'channel' && path[1]) {
             app.loadChannelPage(path[1]);
         } else {
             app.loadFeed(); // Fallback на ленту
@@ -55,7 +53,7 @@ const app = {
 
     renderUserMenu: () => {
         const menu = document.getElementById('userMenu');
-        menu.innerHTML = ''; // Очистка
+        menu.innerHTML = ''; 
         
         if (app.user) {
             menu.innerHTML = `
@@ -80,13 +78,13 @@ const app = {
             authModal.classList.remove('hidden');
             app.toggleAuthMode(type === 'register');
         } else if (type === 'upload') {
+            if (!app.user) return app.showModal('login');
             uploadModal.classList.remove('hidden');
         }
     },
 
     closeModal: () => {
         document.getElementById('modalOverlay').classList.add('hidden');
-        // Сброс форм
         document.getElementById('authForm').reset();
         document.getElementById('uploadForm').reset();
     },
@@ -125,12 +123,12 @@ const app = {
 
         const response = await fetch(endpoint, {
             method: 'POST',
-            body: formData, // FormData работает с multipart/form-data
+            body: formData, 
         });
         const result = await response.json();
 
         if (result.success) {
-            await app.checkUserStatus(); // Обновляем app.user
+            await app.checkUserStatus(); 
             app.closeModal();
             app.loadFeed(); 
         } else {
@@ -145,7 +143,6 @@ const app = {
         const form = e.target;
         const formData = new FormData(form);
         
-        // Проверка на наличие файлов (необходимо, потому что Multer требует их)
         const videoFile = formData.get('video');
         const thumbnailFile = formData.get('thumbnail');
 
@@ -163,9 +160,43 @@ const app = {
             alert("Видео успешно опубликовано!");
             app.closeModal();
             form.reset();
-            app.loadFeed(); // Обновляем ленту
+            app.loadFeed(); 
         } else {
             alert(result.message || "Ошибка при загрузке видео.");
+        }
+    },
+    
+    // Обработка подписки
+    handleSubscribe: async (channelId, isSubscribed) => {
+        if (!app.user) return app.showModal('login');
+
+        const response = await fetch('/api/subscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ channelId: channelId }),
+        });
+        const result = await response.json();
+
+        if (result.success) {
+            const btn = document.getElementById('subscribeBtn');
+            const countElem = document.querySelector('.subscriber-count');
+            
+            const currentCount = parseInt(countElem.textContent.split(' ')[0].replace(/[^0-9]/g, ''));
+            const newCount = currentCount + (result.is_subscribed ? 1 : -1);
+            
+            countElem.textContent = `${app.formatViews(newCount)} подписчиков`;
+
+            if (result.is_subscribed) {
+                btn.classList.add('subscribed');
+                btn.textContent = '✔️ Подписка оформлена';
+                btn.setAttribute('onclick', `app.handleSubscribe(${channelId}, true)`);
+            } else {
+                btn.classList.remove('subscribed');
+                btn.textContent = 'Подписаться';
+                btn.setAttribute('onclick', `app.handleSubscribe(${channelId}, false)`);
+            }
+        } else {
+            alert(result.message || "Ошибка при выполнении операции подписки.");
         }
     },
 
@@ -212,7 +243,7 @@ const app = {
         window.history.pushState({}, '', `/watch/${videoId}`);
         const content = document.getElementById('appContent');
         content.innerHTML = '<h2>Загрузка видео...</h2>';
-        app.currentVideo = videoId; // Устанавливаем текущее видео
+        app.currentVideo = videoId; 
 
         const response = await fetch(`/api/video/${videoId}`);
         if (!response.ok) {
@@ -248,8 +279,18 @@ const app = {
                             <img src="${video.author_avatar}" onclick="app.loadChannelPage(${video.author_id})" alt="${video.username}" class="info-avatar">
                             <div>
                                 <h3 onclick="app.loadChannelPage(${video.author_id})">${video.username}</h3>
-                                <p style="color:var(--text-muted); font-size: 0.9rem;">Опубликовано: ${app.timeAgo(video.created_at)}</p>
+                                <p class="subscriber-count">${app.formatViews(video.subscriber_count)} подписчиков</p>
                             </div>
+                            ${app.user && app.user.id != video.author_id ? 
+                                `<button 
+                                    id="subscribeBtn" 
+                                    class="subscribe-btn ${video.is_subscribed > 0 ? 'subscribed' : ''}" 
+                                    onclick="app.handleSubscribe(${video.author_id}, ${video.is_subscribed > 0})"
+                                >
+                                    ${video.is_subscribed > 0 ? '✔️ Подписка оформлена' : 'Подписаться'}
+                                </button>` 
+                                : ''
+                            }
                         </div>
                         <p>${video.description}</p>
                     </div>
@@ -273,26 +314,65 @@ const app = {
             </div>
         `;
         content.innerHTML = html;
-        // Здесь можно было бы добавить логику для проверки, голосовал ли текущий пользователь
     },
     
     // Рендер страницы канала
     loadChannelPage: async (userId) => {
-        window.history.pushState({}, '', `/channel/user-${userId}`);
+        window.history.pushState({}, '', `/channel/${userId}`);
         const content = document.getElementById('appContent');
         content.innerHTML = '<h2>Загрузка канала...</h2>';
+
+        const response = await fetch(`/api/channel/${userId}`);
+        if (!response.ok) {
+            content.innerHTML = '<h2>Канал не найден (404)</h2>';
+            return;
+        }
         
-        // В рамках MVP:
-        content.innerHTML = `
-            <div class="channel-header">
-                <img src="/img/default_avatar.svg" class="channel-big-avatar" alt="Канал">
-                <div>
-                    <h1>Канал #${userId}</h1>
-                    <p>Здесь будут все видео пользователя, подписки и статистика.</p>
-                    <p>Возвращаемся на <span onclick="app.loadFeed()" style="color:var(--primary); cursor:pointer;">главную ленту</span>.</p>
+        const data = await response.json();
+        const channel = data.channel;
+        const videos = data.videos;
+
+        let html = `
+            <div class="channel-page">
+                <div class="channel-header">
+                    <img src="${channel.avatar}" class="channel-big-avatar" alt="${channel.username}">
+                    <div class="channel-meta">
+                        <h1>${channel.username}</h1>
+                        <p class="subscriber-count">${app.formatViews(channel.subscriber_count)} подписчиков</p>
+                        
+                        ${app.user && app.user.id != channel.id ? 
+                            `<button 
+                                id="subscribeBtn" 
+                                class="subscribe-btn ${channel.is_subscribed > 0 ? 'subscribed' : ''}" 
+                                onclick="app.handleSubscribe(${channel.id}, ${channel.is_subscribed > 0})"
+                            >
+                                ${channel.is_subscribed > 0 ? '✔️ Подписка оформлена' : 'Подписаться'}
+                            </button>` 
+                            : ''
+                        }
+                    </div>
+                </div>
+
+                <div class="channel-videos">
+                    <h3>Видео канала</h3>
+                    <div class="video-grid">
+                        ${videos.length > 0 ? videos.map(v => `
+                            <div class="video-card" onclick="app.loadVideoPage(${v.id})">
+                                <img class="thumb" src="${v.thumbnail}" alt="${v.title}">
+                                <div class="info">
+                                    <img class="info-avatar" src="${channel.avatar}" alt="${channel.username}"> 
+                                    <div class="meta">
+                                        <h3>${v.title}</h3>
+                                        <p>${channel.username} • ${app.formatViews(v.views)} • ${app.timeAgo(v.created_at)}</p>
+                                    </div>
+                                </div>
+                            </div>
+                        `).join('') : '<p>На этом канале пока нет видео.</p>'}
+                    </div>
                 </div>
             </div>
         `;
+        content.innerHTML = html;
     },
 
     // ------------------------------------
@@ -303,8 +383,6 @@ const app = {
         app.socket.on('new_video', (data) => {
             if (window.location.pathname === '/') {
                 console.log('Новое видео: ', data.title);
-                // Для динамического обновления ленты
-                // app.loadFeed(); 
             }
         });
 
@@ -320,10 +398,8 @@ const app = {
         app.socket.on('new_comment', (data) => {
             if (data.videoId == app.currentVideo) {
                 const container = document.getElementById('commentsContainer');
-                // Добавляем новый комментарий в начало
                 container.insertAdjacentHTML('afterbegin', app.renderSingleComment(data.comment));
                 
-                // Обновляем счетчик
                 const countElem = document.getElementById('commentCount');
                 countElem.textContent = parseInt(countElem.textContent) + 1;
             }
@@ -359,7 +435,7 @@ const app = {
             text: text
         });
 
-        document.getElementById('commentText').value = ''; // Очистка поля
+        document.getElementById('commentText').value = ''; 
     },
 
     // ------------------------------------
@@ -373,7 +449,6 @@ const app = {
     },
 
     timeAgo: (dateStr) => {
-        // Fix для правильной обработки UTC времени из SQLite
         const dateV = new Date(dateStr.replace(' ', 'T') + 'Z'); 
         const now = new Date();
         const diff = (now - dateV) / 1000;
@@ -383,7 +458,7 @@ const app = {
         if(diff < 3600) return Math.floor(diff/60) + ' мин. назад';
         if(diff < 86400) return Math.floor(diff/3600) + ' ч. назад';
         if(diff < 604800) return Math.floor(diff/86400) + ' дн. назад';
-        return dateV.toLocaleDateString(); // Дата, если больше недели
+        return dateV.toLocaleDateString(); 
     },
     
     renderSingleComment: (comment) => {
@@ -403,7 +478,7 @@ const app = {
     },
     
     // ------------------------------------
-}; // <-- Обязательно закрывайте объект app здесь!
+}; 
 
 // --- Инициализация при загрузке страницы (запуск приложения) ---
 document.addEventListener('DOMContentLoaded', () => {

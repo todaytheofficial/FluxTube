@@ -131,3 +131,83 @@ button:hover { box-shadow: 0 0 10px var(--primary); }
 .modal { background: var(--card-bg); padding: 30px; border-radius: 10px; width: 400px; position: relative; }
 .hidden { display: none; }
 input, textarea { width: 100%; margin-bottom: 10px; padding: 10px; background: #000; border: 1px solid #333; color: white; border-radius: 5px; box-sizing: border-box;}
+
+.channel-info {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.channel-info .info-avatar {
+    width: 48px;
+    height: 48px;
+}
+
+.channel-info h3 {
+    margin: 0;
+    font-size: 1.1rem;
+    cursor: pointer;
+}
+
+.subscriber-count {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    margin-top: 2px;
+}
+
+.subscribe-btn {
+    background-color: var(--primary);
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-weight: bold;
+    cursor: pointer;
+    margin-left: auto; /* Сдвигает кнопку вправо */
+    transition: background-color 0.2s;
+}
+
+.subscribe-btn:hover {
+    background-color: var(--primary-dark);
+}
+
+.subscribe-btn.subscribed {
+    background-color: var(--background-light);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+}
+
+.subscribe-btn.subscribed:hover {
+    background-color: var(--background-light-hover);
+}
+
+
+/* Стили для страницы канала */
+.channel-page .channel-header {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 20px 0;
+    margin-bottom: 20px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.channel-page .channel-big-avatar {
+    width: 100px;
+    height: 100px;
+    border-radius: 50%;
+    object-fit: cover;
+}
+
+.channel-page .channel-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.channel-page .channel-meta h1 {
+    margin: 0;
+    font-size: 1.8rem;
+}
