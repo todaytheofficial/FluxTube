@@ -1,143 +1,204 @@
+/* public/css/style.css */
+
 :root {
-    --bg: #0f0f13;
-    --card-bg: #1a1a20;
-    --primary: #00f2ea; /* Неон циан */
-    --secondary: #ff0055; /* Неон маджента */
-    --text: #ffffff;
-    --text-muted: #a0a0b0;
-    --glass: rgba(255, 255, 255, 0.05);
+    --background-dark: #181818;
+    --background-light: #282828;
+    --text-color: #FFFFFF;
+    --text-muted: #AAAAAA;
+    --primary: #FF0000;
+    --primary-dark: #CC0000;
+    --border-color: #3D3D3D;
+    --background-light-hover: #3a3a3a;
 }
 
+/* --- ГЛОБАЛЬНЫЕ СТИЛИ --- */
 body {
+    font-family: 'Roboto', sans-serif;
+    background-color: var(--background-dark);
+    color: var(--text-color);
     margin: 0;
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    background-color: var(--bg);
-    color: var(--text);
-    overflow-x: hidden;
+    padding-top: 60px; /* Для фиксированного хедера */
+    min-height: 100vh;
 }
 
-/* Навигация */
-.navbar {
+a {
+    color: var(--text-color);
+    text-decoration: none;
+}
+
+/* --- HEADER --- */
+header {
+    background-color: var(--background-light);
+    padding: 10px 20px;
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 0 20px;
-    height: 60px;
-    background: rgba(15, 15, 19, 0.8);
-    backdrop-filter: blur(10px);
-    position: sticky;
+    position: fixed;
     top: 0;
-    z-index: 100;
-    border-bottom: 1px solid var(--glass);
+    left: 0;
+    right: 0;
+    height: 60px;
+    z-index: 1000;
 }
 
-/* Обновленный логотип */
-.logo { 
-    display: flex; 
-    align-items: center; 
-    gap: 10px; 
-    cursor: pointer; 
-    font-weight: 800; /* Жирнее */
-    font-size: 1.4rem; 
-    letter-spacing: -1px; /* Стильное сжатие букв */
-    color: #fff;
-    text-transform: uppercase;
+.logo {
+    color: var(--primary);
+    font-size: 1.5rem;
+    font-weight: bold;
+    cursor: pointer;
 }
 
-.logo span {
-    background: linear-gradient(90deg, var(--primary), #ffffff);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent; /* Градиентный текст */
+#userMenu {
+    display: flex;
+    align-items: center;
+    gap: 10px;
 }
 
-.logo svg { 
-    fill: var(--primary); 
-    filter: drop-shadow(0 0 5px var(--primary)); /* Свечение иконки */
-}
-
-.search-bar input {
-    background: var(--card-bg);
-    border: none;
-    padding: 10px 15px;
-    border-radius: 20px;
+#userMenu button {
+    background-color: var(--primary);
     color: white;
-    width: 300px;
-    outline: none;
-}
-
-.user-menu img { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; cursor: pointer; }
-button {
-    background: var(--primary);
     border: none;
-    padding: 8px 16px;
-    border-radius: 4px;
+    padding: 8px 12px;
+    border-radius: 3px;
     cursor: pointer;
     font-weight: bold;
-    color: #000;
-    transition: 0.3s;
+    transition: background-color 0.2s;
 }
-button:hover { box-shadow: 0 0 10px var(--primary); }
 
-/* Сетка видео */
+#userMenu button:hover {
+    background-color: var(--primary-dark);
+}
+
+#userMenu img {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    cursor: pointer;
+    object-fit: cover;
+}
+
+/* --- ОСНОВНОЙ КОНТЕНТ --- */
+#appContent {
+    padding: 20px;
+    max-width: 1400px;
+    margin: 0 auto;
+}
+
+/* --- ВИДЕО СЕТКА (ЛЕНТА) --- */
 .video-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
     gap: 20px;
-    padding: 20px;
 }
 
 .video-card {
-    background: var(--card-bg);
-    border-radius: 10px;
-    overflow: hidden;
-    transition: transform 0.2s;
+    background-color: var(--background-dark);
     cursor: pointer;
+    overflow: hidden;
+    border-radius: 5px;
 }
-.video-card:hover { transform: translateY(-5px); }
-.thumb { width: 100%; aspect-ratio: 16/9; object-fit: cover; }
-.info { padding: 10px; display: flex; gap: 10px; }
-.info-avatar { width: 36px; height: 36px; border-radius: 50%; }
-.meta h3 { margin: 0 0 5px 0; font-size: 1rem; }
-.meta p { margin: 0; color: var(--text-muted); font-size: 0.8rem; }
 
-/* Плеер */
-.player-container { display: flex; gap: 20px; padding: 20px; max-width: 1400px; margin: 0 auto; }
-.video-stage { flex: 3; }
-.video-wrapper video { width: 100%; border-radius: 10px; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
-.video-stats { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
-.actions button { background: var(--glass); color: white; margin-left: 5px; }
-.actions button.active { color: var(--secondary); }
+.video-card .thumb {
+    width: 100%;
+    height: 160px; /* Фиксированная высота для превью */
+    object-fit: cover;
+    border-radius: 5px;
+}
 
-.comments-section { flex: 1; background: var(--card-bg); padding: 15px; border-radius: 10px; height: fit-content; }
-.comment { display: flex; gap: 10px; margin-bottom: 15px; border-bottom: 1px solid var(--glass); padding-bottom: 10px; }
-.comment-avatar { width: 30px; height: 30px; border-radius: 50%; }
-
-/* Канал */
-.channel-header {
-    background: linear-gradient(45deg, #1a1a20, #2a2a35);
-    padding: 40px 20px;
+.video-card .info {
     display: flex;
-    align-items: center;
+    padding: 10px 0;
+    gap: 10px;
+    align-items: flex-start;
+}
+
+.video-card .info-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    object-fit: cover;
+}
+
+.video-card .meta h3 {
+    font-size: 1rem;
+    margin: 0 0 4px 0;
+    line-height: 1.2;
+    max-height: 2.4em;
+    overflow: hidden;
+}
+
+.video-card .meta p {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin: 0;
+}
+
+/* --- СТРАНИЦА ПРОСМОТРА ВИДЕО --- */
+.player-container {
+    display: flex;
     gap: 20px;
 }
-.channel-big-avatar { width: 100px; height: 100px; border-radius: 50%; border: 3px solid var(--primary); }
 
-/* Модальные окна */
-.modal-overlay {
-    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-    background: rgba(0,0,0,0.8); z-index: 1000;
-    display: flex; justify-content: center; align-items: center;
+.video-stage {
+    flex: 3;
+    min-width: 0; /* Важно для мобильной отзывчивости */
 }
-.modal { background: var(--card-bg); padding: 30px; border-radius: 10px; width: 400px; position: relative; }
-.hidden { display: none; }
-input, textarea { width: 100%; margin-bottom: 10px; padding: 10px; background: #000; border: 1px solid #333; color: white; border-radius: 5px; box-sizing: border-box;}
 
+.comments-section {
+    flex: 1;
+    min-width: 300px;
+}
+
+.video-wrapper {
+    background-color: black;
+    aspect-ratio: 16 / 9;
+    width: 100%;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.video-details h1 {
+    font-size: 1.5rem;
+    margin: 15px 0 10px 0;
+}
+
+.video-stats {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: var(--text-muted);
+}
+
+.video-stats .actions button {
+    background-color: var(--background-light);
+    color: var(--text-color);
+    border: none;
+    padding: 8px 15px;
+    border-radius: 20px;
+    margin-left: 10px;
+    cursor: pointer;
+    font-weight: bold;
+    transition: background-color 0.2s;
+}
+
+.video-stats .actions button:hover {
+    background-color: var(--background-light-hover);
+}
+
+.video-details hr {
+    border: none;
+    border-top: 1px solid var(--border-color);
+    margin: 10px 0;
+}
+
+/* КАНАЛ И ПОДПИСКА (На странице видео) */
 .channel-info {
     display: flex;
     align-items: center;
     gap: 15px;
     padding: 10px 0;
     border-bottom: 1px solid var(--border-color);
+    margin-bottom: 15px;
 }
 
 .channel-info .info-avatar {
@@ -183,8 +244,43 @@ input, textarea { width: 100%; margin-bottom: 10px; padding: 10px; background: #
     background-color: var(--background-light-hover);
 }
 
+/* КОММЕНТАРИИ */
+#commentForm input, #commentForm button {
+    padding: 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 3px;
+    margin-bottom: 5px;
+}
 
-/* Стили для страницы канала */
+#commentForm input {
+    width: calc(100% - 100px);
+    background-color: var(--background-dark);
+    color: var(--text-color);
+    margin-right: 5px;
+}
+
+#commentForm button {
+    background-color: var(--primary);
+    color: white;
+    width: 90px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.comment {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.comment-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    object-fit: cover;
+}
+
+/* --- СТРАНИЦА КАНАЛА --- */
 .channel-page .channel-header {
     display: flex;
     align-items: center;
@@ -210,4 +306,193 @@ input, textarea { width: 100%; margin-bottom: 10px; padding: 10px; background: #
 .channel-page .channel-meta h1 {
     margin: 0;
     font-size: 1.8rem;
+}
+
+/* --- МОДАЛЬНЫЕ ОКНА (АВТОРИЗАЦИЯ, ЗАГРУЗКА) --- */
+
+#modalOverlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 2000;
+}
+
+.modal {
+    background-color: var(--background-light);
+    padding: 25px;
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    width: 90%; /* Шире для телефонов */
+    max-width: 400px; /* Ограничение на больших экранах */
+    box-sizing: border-box;
+    position: relative;
+    /* Убедимся, что модальное окно прокручивается на маленьких экранах */
+    max-height: 90vh; 
+    overflow-y: auto;
+}
+
+.modal-close {
+    position: absolute;
+    top: 10px;
+    right: 15px;
+    font-size: 1.5rem;
+    cursor: pointer;
+    color: var(--text-muted);
+}
+
+.modal h2 {
+    margin-top: 0;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 10px;
+    margin-bottom: 20px;
+}
+
+.modal form {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.modal input[type="text"],
+.modal input[type="password"],
+.modal input[type="file"],
+.modal textarea {
+    padding: 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background-color: var(--background-dark);
+    color: var(--text-color);
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.modal button[type="submit"] {
+    background-color: var(--primary);
+    color: white;
+    padding: 12px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+    margin-top: 10px;
+}
+
+.modal-footer {
+    text-align: center;
+    margin-top: 15px;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+}
+
+.modal-footer a {
+    color: var(--primary);
+    cursor: pointer;
+}
+
+.hidden {
+    display: none !important;
+}
+
+/* --- МОБИЛЬНАЯ ОТЗЫВЧИВОСТЬ (MEDIA QUERIES) --- */
+@media (max-width: 900px) {
+    /* На странице просмотра видео, переносим комментарии вниз */
+    .player-container {
+        flex-direction: column;
+    }
+    
+    .comments-section {
+        min-width: unset;
+        width: 100%;
+    }
+
+    /* Адаптируем логотип в хедере */
+    .logo {
+        font-size: 1.3rem;
+    }
+
+    /* Адаптируем кнопку загрузки, чтобы она помещалась */
+    #userMenu button {
+        padding: 6px 10px;
+        font-size: 0.85rem;
+    }
+}
+
+@media (max-width: 600px) {
+    #appContent {
+        padding: 10px;
+    }
+    
+    /* Убираем сетку, оставляем карточки в столбик */
+    .video-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .video-card .thumb {
+        height: auto; /* Пусть превью займет всю ширину */
+        aspect-ratio: 16 / 9;
+    }
+
+    /* Упрощаем хедер */
+    header {
+        padding: 10px;
+    }
+
+    /* Скрываем текст "Загрузить", оставляя только иконку (если бы она была, но для кнопки используем короткий текст) */
+    #userMenu button {
+        /* Можно заменить на иконку, но пока просто уменьшим */
+        padding: 8px; 
+        width: 80px;
+        font-size: 0.8rem;
+    }
+
+    /* Скрываем текст счетчика просмотров, если не помещается */
+    .video-stats {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+    }
+    
+    .video-stats .actions {
+        width: 100%;
+        display: flex;
+        justify-content: space-around;
+        gap: 0;
+    }
+    
+    .video-stats .actions button {
+        flex: 1;
+        margin: 0 5px;
+    }
+
+    /* Упрощение формы комментариев */
+    #commentForm {
+        display: flex;
+        flex-wrap: wrap;
+    }
+    
+    #commentForm input {
+        width: 100%; /* Полная ширина */
+        margin-right: 0;
+        margin-bottom: 10px;
+    }
+    
+    #commentForm button {
+        width: 100%;
+    }
+    
+    /* Адаптация страницы канала */
+    .channel-page .channel-header {
+        flex-direction: column;
+        text-align: center;
+    }
+    
+    .channel-page .channel-meta {
+        align-items: center;
+    }
 }
