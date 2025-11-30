@@ -1,306 +1,411 @@
-const socket = io();
-let currentUser = null;
-const formData = new FormData(form);
+// public/js/script.js
 
-
+// Инициализация объекта, который будет содержать всю логику приложения
 const app = {
-    init: () => {
-        app.checkSession();
-        // Проверка URL при загрузке (роутинг)
-        const path = window.location.pathname;
-        if (path.startsWith('/watch/')) {
-            app.loadVideo(path.split('/').pop());
-        } else if (path.length > 1 && path.includes('/')) {
-            // Формат /Name/ID
-            const parts = path.split('/');
-            if(parts.length >= 3) app.loadChannel(parts[2]); // ID
-        } else {
-            app.loadFeed();
-        }
-        
-        // Слушаем сокеты
-        app.setupSockets();
-    },
-
-    setupSockets: () => {
-        socket.on('new_video', (vid) => {
-            // Если мы в ленте - добавить видео динамически
-            const grid = document.querySelector('.video-grid');
-            if(grid) {
-                // В реальном приложении лучше создать элемент через DOM API
-                app.loadFeed(); 
-            }
-        });
-
-        socket.on('update_votes', ({ videoId, likes, dislikes }) => {
-            const lBtn = document.getElementById('likeBtn');
-            const dBtn = document.getElementById('dislikeBtn');
-            if(lBtn && lBtn.dataset.vid == videoId) {
-                lBtn.innerHTML = `👍 ${likes}`;
-                dBtn.innerHTML = `👎 ${dislikes}`;
-            }
-        });
-        
-        socket.on('update_view_count', ({videoId, views}) => {
-             const vCount = document.getElementById('viewCount');
-             if(vCount && vCount.dataset.vid == videoId) vCount.innerText = `${views} просмотров`;
-        });
-
-        socket.on('new_comment', ({videoId, comment}) => {
-            const list = document.getElementById('commentsList');
-            // Проверяем, открыто ли сейчас это видео
-            const currentVidId = document.querySelector('.video-wrapper video')?.dataset.id;
-            if(list && currentVidId == videoId) {
-                list.insertAdjacentHTML('afterbegin', `
-                    <div class="comment">
-                        <img src="${comment.avatar}" class="comment-avatar">
-                        <div>
-                            <b>${comment.username}</b> <small>${app.timeAgo(comment.created_at)}</small>
-                            <p>${comment.text}</p>
-                        </div>
-                    </div>
-                `);
-            }
-        });
-    },
-
-    checkSession: async () => {
-        const res = await fetch('/api/me');
-        const data = await res.json();
-        if (data.id) {
-            currentUser = data;
-            document.getElementById('userMenu').innerHTML = `
-                <div style="display:flex; gap:10px; align-items:center;">
-                    <button onclick="app.showModal('upload')">Загрузить</button>
-                    <img src="${data.avatar}" onclick="app.loadChannel(${data.id})">
-                </div>
-            `;
-        }
-    },
-
-    // --- Рендеринг страниц (SPA) ---
     
+    // Переменные состояния
+    user: null, 
+    currentVideo: null,
+    
+    // Объект для взаимодействия с Socket.io (предполагает, что socket.io.js загружен)
+    socket: io(), 
+
+    // ------------------------------------
+    // 1. ИНИЦИАЛИЗАЦИЯ И УПРАВЛЕНИЕ СТРАНИЦЕЙ
+    // ------------------------------------
+
+    init: () => {
+        app.checkUserStatus();
+        app.setupSocketListeners();
+        // В зависимости от URL, загружаем контент
+        app.route(); 
+        
+        // Настройка прослушивания событий модальных окон
+        document.getElementById('authForm').onsubmit = app.handleAuthSubmit;
+        document.getElementById('uploadForm').onsubmit = app.handleUploadSubmit;
+    },
+
+    route: () => {
+        const path = window.location.pathname.split('/').filter(p => p);
+        if (path.length === 0) {
+            app.loadFeed();
+        } else if (path[0] === 'watch' && path[1]) {
+            app.loadVideoPage(path[1]);
+        } else if (path.length === 2 && path[0] !== 'api' && path[1]) {
+            // Предполагаем, что это /username/userId
+            app.loadChannelPage(path[1]);
+        } else {
+            app.loadFeed(); // Fallback на ленту
+        }
+    },
+
+    // ------------------------------------
+    // 2. АВТОРИЗАЦИЯ И МОДАЛЬНЫЕ ОКНА
+    // ------------------------------------
+    
+    checkUserStatus: async () => {
+        const response = await fetch('/api/me');
+        if (response.ok) {
+            app.user = await response.json();
+        } else {
+            app.user = null;
+        }
+        app.renderUserMenu();
+    },
+
+    renderUserMenu: () => {
+        const menu = document.getElementById('userMenu');
+        menu.innerHTML = ''; // Очистка
+        
+        if (app.user) {
+            menu.innerHTML = `
+                <button onclick="app.showModal('upload')">Загрузить</button>
+                <img src="${app.user.avatar}" onclick="app.loadChannelPage(${app.user.id})" alt="${app.user.username}">
+            `;
+        } else {
+            menu.innerHTML = `<button onclick="app.showModal('login')">Войти</button>`;
+        }
+    },
+
+    showModal: (type) => {
+        const overlay = document.getElementById('modalOverlay');
+        const authModal = document.getElementById('authModal');
+        const uploadModal = document.getElementById('uploadModal');
+
+        overlay.classList.remove('hidden');
+        authModal.classList.add('hidden');
+        uploadModal.classList.add('hidden');
+
+        if (type === 'login' || type === 'register') {
+            authModal.classList.remove('hidden');
+            app.toggleAuthMode(type === 'register');
+        } else if (type === 'upload') {
+            uploadModal.classList.remove('hidden');
+        }
+    },
+
+    closeModal: () => {
+        document.getElementById('modalOverlay').classList.add('hidden');
+        // Сброс форм
+        document.getElementById('authForm').reset();
+        document.getElementById('uploadForm').reset();
+    },
+
+    toggleAuthMode: (isRegister = null) => {
+        const authModal = document.getElementById('authModal');
+        const regFields = document.getElementById('regFields');
+        const modalTitle = document.getElementById('modalTitle');
+        const submitBtn = authModal.querySelector('button[type="submit"]');
+        const toggleLink = document.getElementById('toggleAuth');
+        
+        const isCurrentlyRegister = regFields.classList.contains('active');
+        const shouldBeRegister = isRegister !== null ? isRegister : !isCurrentlyRegister;
+
+        if (shouldBeRegister) {
+            regFields.classList.add('active');
+            regFields.classList.remove('hidden');
+            modalTitle.textContent = 'Регистрация';
+            submitBtn.textContent = 'Создать аккаунт';
+            toggleLink.innerHTML = 'Уже есть аккаунт? Войти';
+        } else {
+            regFields.classList.remove('active');
+            regFields.classList.add('hidden');
+            modalTitle.textContent = 'Вход';
+            submitBtn.textContent = 'Продолжить';
+            toggleLink.innerHTML = 'Нет аккаунта? Создать';
+        }
+    },
+
+    handleAuthSubmit: async (e) => {
+        e.preventDefault();
+        const form = e.target;
+        const formData = new FormData(form);
+        const isRegister = document.getElementById('regFields').classList.contains('active');
+        const endpoint = isRegister ? '/api/register' : '/api/login';
+
+        const response = await fetch(endpoint, {
+            method: 'POST',
+            body: formData, // FormData работает с multipart/form-data
+        });
+        const result = await response.json();
+
+        if (result.success) {
+            await app.checkUserStatus(); // Обновляем app.user
+            app.closeModal();
+            app.loadFeed(); 
+        } else {
+            alert(result.message || "Ошибка авторизации/регистрации.");
+        }
+    },
+
+    handleUploadSubmit: async (e) => {
+        e.preventDefault();
+        if (!app.user) return alert("Пожалуйста, войдите, чтобы загрузить видео.");
+
+        const form = e.target;
+        const formData = new FormData(form);
+        
+        // Проверка на наличие файлов (необходимо, потому что Multer требует их)
+        const videoFile = formData.get('video');
+        const thumbnailFile = formData.get('thumbnail');
+
+        if (!videoFile || !thumbnailFile || videoFile.size === 0 || thumbnailFile.size === 0) {
+            return alert("Пожалуйста, выберите видео и обложку.");
+        }
+
+        const response = await fetch('/api/upload', {
+            method: 'POST',
+            body: formData,
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            alert("Видео успешно опубликовано!");
+            app.closeModal();
+            form.reset();
+            app.loadFeed(); // Обновляем ленту
+        } else {
+            alert(result.message || "Ошибка при загрузке видео.");
+        }
+    },
+
+    // ------------------------------------
+    // 3. РЕНДЕРИНГ КОНТЕНТА
+    // ------------------------------------
+    
+    // Рендер главной ленты
     loadFeed: async () => {
         window.history.pushState({}, '', '/');
-        const res = await fetch('/api/videos');
-        const videos = await res.json();
+        const content = document.getElementById('appContent');
+        content.innerHTML = '<h2>Загрузка ленты...</h2>';
+
+        const response = await fetch('/api/videos');
+        const videos = await response.json();
         
-        const html = `
-            <div class="video-grid">
-                ${videos.map(v => `
-                    <div class="video-card" onclick="app.loadVideo(${v.id})">
-                        <img src="${v.thumbnail}" class="thumb">
+        let html = '<div class="video-grid">';
+        
+        if (videos.length === 0) {
+            html = '<h2 style="text-align: center; color: var(--text-muted); padding: 50px;">Видео пока нет. Станьте первым!</h2>';
+        } else {
+            videos.forEach(v => {
+                html += `
+                    <div class="video-card" onclick="app.loadVideoPage(${v.id})">
+                        <img class="thumb" src="${v.thumbnail}" alt="${v.title}">
                         <div class="info">
-                            <img src="${v.author_avatar}" class="info-avatar">
+                            <img class="info-avatar" src="${v.author_avatar}" alt="${v.username}">
                             <div class="meta">
                                 <h3>${v.title}</h3>
-                                <p>${v.username} • ${v.views} просмотров</p>
-                                <p>${app.timeAgo(v.created_at)}</p>
+                                <p>${v.username} • ${app.formatViews(v.views)} • ${app.timeAgo(v.created_at)}</p>
                             </div>
                         </div>
                     </div>
-                `).join('')}
-            </div>
-        `;
-        document.getElementById('appContent').innerHTML = html;
+                `;
+            });
+            html += '</div>';
+        }
+
+        content.innerHTML = html;
     },
 
-    loadVideo: async (id) => {
-        window.history.pushState({}, '', `/watch/${id}`);
-        const res = await fetch(`/api/video/${id}`);
-        const { video, comments } = await res.json();
+    // Рендер страницы просмотра видео
+    loadVideoPage: async (videoId) => {
+        window.history.pushState({}, '', `/watch/${videoId}`);
+        const content = document.getElementById('appContent');
+        content.innerHTML = '<h2>Загрузка видео...</h2>';
+        app.currentVideo = videoId; // Устанавливаем текущее видео
 
-        const html = `
+        const response = await fetch(`/api/video/${videoId}`);
+        if (!response.ok) {
+            content.innerHTML = '<h2>Видео не найдено (404)</h2>';
+            return;
+        }
+        
+        const data = await response.json();
+        const video = data.video;
+        const comments = data.comments;
+
+        let html = `
             <div class="player-container">
                 <div class="video-stage">
                     <div class="video-wrapper">
-                        <video src="${video.filename}" controls autoplay data-id="${video.id}"></video>
+                        <video id="videoPlayer" width="100%" controls autoplay>
+                            <source src="${video.filename}" type="video/mp4">
+                            Ваш браузер не поддерживает HTML5 видео.
+                        </video>
                     </div>
-                    <h1>${video.title}</h1>
-                    <div class="video-stats">
-                        <div id="viewCount" data-vid="${video.id}">${video.views} просмотров</div>
-                        <div class="actions">
-                            <button id="likeBtn" data-vid="${video.id}" onclick="app.vote(${video.id}, 'like')">👍 ${video.likes}</button>
-                            <button id="dislikeBtn" data-vid="${video.id}" onclick="app.vote(${video.id}, 'dislike')">👎 ${video.dislikes}</button>
+                    
+                    <div class="video-details">
+                        <h1>${video.title}</h1>
+                        <div class="video-stats">
+                            <span id="viewCount">${app.formatViews(video.views)} просмотров</span>
+                            <div class="actions">
+                                <button id="likeBtn" onclick="app.handleVote(${video.id}, 'like')" data-count="${video.likes}">👍 ${video.likes}</button>
+                                <button id="dislikeBtn" onclick="app.handleVote(${video.id}, 'dislike')" data-count="${video.dislikes}">👎 ${video.dislikes}</button>
+                            </div>
                         </div>
+                        <hr>
+                        <div class="channel-info">
+                            <img src="${video.author_avatar}" onclick="app.loadChannelPage(${video.author_id})" alt="${video.username}" class="info-avatar">
+                            <div>
+                                <h3 onclick="app.loadChannelPage(${video.author_id})">${video.username}</h3>
+                                <p style="color:var(--text-muted); font-size: 0.9rem;">Опубликовано: ${app.timeAgo(video.created_at)}</p>
+                            </div>
+                        </div>
+                        <p>${video.description}</p>
                     </div>
-                    <hr style="border-color:var(--glass)">
-                    <div style="display:flex; gap:10px; align-items:center; cursor:pointer" onclick="app.loadChannel(${video.author_id}, '${video.username}')">
-                        <img src="${video.author_avatar}" style="width:50px; height:50px; border-radius:50%">
-                        <h3>${video.username}</h3>
-                    </div>
-                    <p>${video.description || ''}</p>
+                    <div class="comments-list" id="commentsList">
+                        </div>
                 </div>
                 
                 <div class="comments-section">
-                    <h3>Комментарии</h3>
-                    ${currentUser ? `
-                        <div style="display:flex; gap:5px;">
-                            <input id="commentInput" type="text" placeholder="Написать...">
-                            <button onclick="app.sendComment(${video.id})">></button>
-                        </div>
-                    ` : '<p>Войдите, чтобы комментировать</p>'}
-                    <div id="commentsList" style="margin-top:20px;">
-                        ${comments.map(c => `
-                            <div class="comment">
-                                <img src="${c.avatar}" class="comment-avatar">
-                                <div>
-                                    <b>${c.username}</b> <small>${app.timeAgo(c.created_at)}</small>
-                                    <p>${c.text}</p>
-                                </div>
-                            </div>
-                        `).join('')}
+                    <h3>Комментарии (<span id="commentCount">${comments.length}</span>)</h3>
+                    ${app.user ? `
+                        <form id="commentForm" onsubmit="app.handleCommentSubmit(event, ${video.id}); return false;">
+                            <input type="text" id="commentText" placeholder="Напишите комментарий..." required>
+                            <button type="submit">Отправить</button>
+                        </form>
+                        <hr>` : `<p style="text-align:center; color: var(--text-muted);">Войдите, чтобы комментировать.</p>`
+                    }
+                    <div id="commentsContainer">
+                        ${app.renderComments(comments)}
                     </div>
                 </div>
             </div>
         `;
-        document.getElementById('appContent').innerHTML = html;
+        content.innerHTML = html;
+        // Здесь можно было бы добавить логику для проверки, голосовал ли текущий пользователь
     },
-
-    loadChannel: async (id, name = 'User') => {
-        // Формируем URL /Name/ID
-        window.history.pushState({}, '', `/${name}/${id}`);
+    
+    // Рендер страницы канала
+    loadChannelPage: async (userId) => {
+        window.history.pushState({}, '', `/channel/user-${userId}`);
+        const content = document.getElementById('appContent');
+        content.innerHTML = '<h2>Загрузка канала...</h2>';
         
-        // В реальном проекте нужен API endpoint /api/channel/:id для получения видео юзера
-        // Тут отфильтруем просто все видео (упрощение)
-        const res = await fetch('/api/videos');
-        const allVideos = await res.json();
-        const userVideos = allVideos.filter(v => v.author_id == id);
-        
-        // Если это наш канал, покажем кнопку смены аватарки
-        const isMe = currentUser && currentUser.id == id;
-        
-        let headerHtml = `
+        // В рамках MVP:
+        content.innerHTML = `
             <div class="channel-header">
-                <div style="position:relative">
-                    <img src="${userVideos[0]?.author_avatar || '/img/default_avatar.svg'}" class="channel-big-avatar">
-                    ${isMe ? `<button onclick="document.getElementById('newAv').click()" style="position:absolute; bottom:0; right:0; font-size:0.8rem">📷</button>
-                              <input type="file" id="newAv" hidden onchange="app.changeAvatar(this)">` : ''}
-                </div>
+                <img src="/img/default_avatar.svg" class="channel-big-avatar" alt="Канал">
                 <div>
-                    <h1>${userVideos[0]?.username || name}</h1>
-                    <p>${userVideos.length} видео</p>
+                    <h1>Канал #${userId}</h1>
+                    <p>Здесь будут все видео пользователя, подписки и статистика.</p>
+                    <p>Возвращаемся на <span onclick="app.loadFeed()" style="color:var(--primary); cursor:pointer;">главную ленту</span>.</p>
                 </div>
             </div>
         `;
-
-        let gridHtml = `<div class="video-grid">
-            ${userVideos.map(v => `
-                 <div class="video-card" onclick="app.loadVideo(${v.id})">
-                    <img src="${v.thumbnail}" class="thumb">
-                    <div class="info">
-                        <div class="meta">
-                            <h3>${v.title}</h3>
-                            <p>${v.views} просмотров • ${app.timeAgo(v.created_at)}</p>
-                        </div>
-                    </div>
-                </div>
-            `).join('')}
-        </div>`;
-
-        document.getElementById('appContent').innerHTML = headerHtml + gridHtml;
     },
 
-    // --- Действия ---
-    vote: (vid, type) => {
-        if(!currentUser) return app.showModal('login');
-        socket.emit('vote', { videoId: vid, type, userId: currentUser.id });
-    },
+    // ------------------------------------
+    // 4. SOCKET.IO И РЕАЛЬНОЕ ВРЕМЯ
+    // ------------------------------------
 
-    sendComment: (vid) => {
-        const input = document.getElementById('commentInput');
-        if(!input.value) return;
-        socket.emit('send_comment', { videoId: vid, userId: currentUser.id, text: input.value });
-        input.value = '';
-    },
-
-    changeAvatar: async (input) => {
-        const formData = new FormData();
-        formData.append('avatar', input.files[0]);
-        await fetch('/api/update-avatar', { method: 'POST', body: formData });
-        window.location.reload();
-    },
-
-timeAgo: (dateStr) => {
-    // 1. Превращаем формат SQLite "2023-11-30 12:00:00" в ISO "2023-11-30T12:00:00.000Z"
-    // Буква 'Z' в конце говорит браузеру, что это время UTC
-    const dateV = new Date(dateStr.replace(' ', 'T') + 'Z');
-    
-    // 2. Получаем текущее время
-    const now = new Date();
-    
-    // 3. Считаем разницу в секундах
-    const diff = (now - dateV) / 1000;
-
-    // Защита от отрицательных чисел (если время на сервере чуть спешит)
-    if (diff < 0) return 'только что';
-
-    if(diff < 60) return 'только что';
-    if(diff < 3600) return Math.floor(diff/60) + ' мин. назад';
-    if(diff < 86400) return Math.floor(diff/3600) + ' ч. назад';
-    return Math.floor(diff/86400) + ' дн. назад';
-},
-
-    showModal: (type) => {
-        document.getElementById('modalOverlay').classList.remove('hidden');
-        if(type === 'login') {
-            document.getElementById('authModal').classList.remove('hidden');
-            document.getElementById('uploadModal').classList.add('hidden');
-        } else {
-            document.getElementById('authModal').classList.add('hidden');
-            document.getElementById('uploadModal').classList.remove('hidden');
-        }
-    },
-    
-    closeModal: () => {
-        document.getElementById('modalOverlay').classList.add('hidden');
-    },
-
-    toggleAuthMode: () => {
-        const isReg = document.getElementById('regFields').classList.toggle('hidden');
-        document.getElementById('modalTitle').innerText = isReg ? 'Вход' : 'Регистрация';
-        // Логику переключения action формы можно добавить здесь
-    }
-};
-
-// Обработка форм
-document.getElementById('authForm').onsubmit = async (e) => {
-    e.preventDefault();
-    const isRegister = !document.getElementById('regFields').classList.contains('hidden');
-    const endpoint = isRegister ? '/api/register' : '/api/login';
-    const body = new FormData(e.target);
-    
-    // Fetch для FormData автоматически ставит нужные заголовки, 
-    // но для JSON (login) нужно иначе. Для упрощения отправляем FormData везде (multer разберет)
-    // но для json endpoint в express нужен body parser. 
-    // Проще: для регистрации FormData, для логина JSON
-    
-    let res;
-    if(isRegister) {
-        res = await fetch(endpoint, { method: 'POST', body: body });
-    } else {
-        const data = Object.fromEntries(body.entries());
-        res = await fetch(endpoint, { 
-            method: 'POST', 
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(data) 
+    setupSocketListeners: () => {
+        app.socket.on('new_video', (data) => {
+            if (window.location.pathname === '/') {
+                console.log('Новое видео: ', data.title);
+                // Для динамического обновления ленты
+                // app.loadFeed(); 
+            }
         });
-    }
+
+        app.socket.on('update_votes', (data) => {
+            if (data.videoId == app.currentVideo) {
+                document.getElementById('likeBtn').textContent = `👍 ${data.likes}`;
+                document.getElementById('dislikeBtn').textContent = `👎 ${data.dislikes}`;
+                document.getElementById('likeBtn').dataset.count = data.likes;
+                document.getElementById('dislikeBtn').dataset.count = data.dislikes;
+            }
+        });
+
+        app.socket.on('new_comment', (data) => {
+            if (data.videoId == app.currentVideo) {
+                const container = document.getElementById('commentsContainer');
+                // Добавляем новый комментарий в начало
+                container.insertAdjacentHTML('afterbegin', app.renderSingleComment(data.comment));
+                
+                // Обновляем счетчик
+                const countElem = document.getElementById('commentCount');
+                countElem.textContent = parseInt(countElem.textContent) + 1;
+            }
+        });
+        
+        app.socket.on('update_view_count', (data) => {
+            if (data.videoId == app.currentVideo) {
+                document.getElementById('viewCount').textContent = `${app.formatViews(data.views)} просмотров`;
+            }
+        });
+    },
+
+    handleVote: (videoId, type) => {
+        if (!app.user) return app.showModal('login');
+        
+        app.socket.emit('vote', {
+            videoId: videoId,
+            type: type,
+            userId: app.user.id
+        });
+    },
+
+    handleCommentSubmit: (e, videoId) => {
+        e.preventDefault();
+        if (!app.user) return app.showModal('login');
+
+        const text = document.getElementById('commentText').value;
+        if (!text) return;
+        
+        app.socket.emit('send_comment', {
+            videoId: videoId,
+            userId: app.user.id,
+            text: text
+        });
+
+        document.getElementById('commentText').value = ''; // Очистка поля
+    },
+
+    // ------------------------------------
+    // 5. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ И РЕНДЕР-ХЕЛПЕРЫ
+    // ------------------------------------
+
+    formatViews: (num) => {
+        if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
+        if (num >= 1000) return (num / 1000).toFixed(0) + 'K';
+        return num;
+    },
+
+    timeAgo: (dateStr) => {
+        // Fix для правильной обработки UTC времени из SQLite
+        const dateV = new Date(dateStr.replace(' ', 'T') + 'Z'); 
+        const now = new Date();
+        const diff = (now - dateV) / 1000;
+
+        if (diff < 0) return 'только что';
+        if(diff < 60) return 'только что';
+        if(diff < 3600) return Math.floor(diff/60) + ' мин. назад';
+        if(diff < 86400) return Math.floor(diff/3600) + ' ч. назад';
+        if(diff < 604800) return Math.floor(diff/86400) + ' дн. назад';
+        return dateV.toLocaleDateString(); // Дата, если больше недели
+    },
     
-    const json = await res.json();
-    if(json.success) window.location.reload();
-    else alert(json.message);
-};
+    renderSingleComment: (comment) => {
+        return `
+            <div class="comment">
+                <img class="comment-avatar" src="${comment.avatar}" alt="${comment.username}">
+                <div>
+                    <p><strong>${comment.username}</strong> <span style="font-size: 0.8rem; color: var(--text-muted);">${app.timeAgo(comment.created_at)}</span></p>
+                    <p>${comment.text}</p>
+                </div>
+            </div>
+        `;
+    },
 
-document.getElementById('uploadForm').onsubmit = async (e) => {
-    e.preventDefault();
-    const body = new FormData(e.target);
-    fetch('/api/upload', { method: 'POST', body: formData})
-    const json = await res.json();
-    if(json.success) {
-        app.closeModal();
-        app.loadFeed();
-    }
-};
+    renderComments: (comments) => {
+        return comments.map(app.renderSingleComment).join('');
+    },
+    
+    // ------------------------------------
+}; // <-- Обязательно закрывайте объект app здесь!
 
-app.init();
+// --- Инициализация при загрузке страницы (запуск приложения) ---
+document.addEventListener('DOMContentLoaded', () => {
+    app.init(); 
+});
