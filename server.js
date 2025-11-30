@@ -22,7 +22,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
-// --- НАСТРОЙКА СТАТИЧЕСКИХ ФАЙЛОВ И АВТОСОЗДАНИЕ ПАПОК ---
+// --- НАСТРОЙКА СТАТИЧЕСКИХ ФАЙЛОВ И АВТОСОЗДАНИЕ ПАПОК --
 
 // Проверяем и создаем папку database
 const dbDir = path.dirname(DB_PATH);
