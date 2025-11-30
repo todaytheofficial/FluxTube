@@ -18,11 +18,16 @@ const PORT = 3000;
 const DB_PATH = './database/video_hosting.db';
 const UPLOADS_PATH = path.join(__dirname, 'uploads');
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Устанавливаем длительный срок действия куки для постоянной авторизации (7 дней)
+const COOKIE_MAX_AGE = 1000 * 60 * 60 * 24 * 7; 
+
+// --- НАСТРОЙКА Express и ЛИМИТОВ ---
+// Увеличиваем лимит размера тела запроса до 50MB для приема больших видеофайлов
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(cookieParser());
 
-// --- АВТОМАТИЧЕСКОЕ СОЗДАНИЕ ПАПОК ДЛЯ УСТРАНЕНИЯ ОШИБОК ENOENT / CANTOPEN ---
+// --- АВТОМАТИЧЕСКОЕ СОЗДАНИЕ ПАПОК ---
 
 // Проверяем и создаем папку database
 const dbDir = path.dirname(DB_PATH);
@@ -37,10 +42,10 @@ if (!fs.existsSync(UPLOADS_PATH)){
     console.log('Папка uploads создана.');
 }
 
-// 1. Обслуживание статических файлов из public (HTML, CSS, Frontend JS)
+// 1. Обслуживание статических файлов из public
 app.use(express.static('public'));
 
-// 2. Обслуживание загруженных файлов по URL /uploads (Видео, Обложки, Аватары)
+// 2. Обслуживание загруженных файлов по URL /uploads
 app.use('/uploads', express.static(UPLOADS_PATH)); 
 
 
@@ -70,7 +75,7 @@ db.serialize(() => {
         FOREIGN KEY(author_id) REFERENCES users(id)
     )`);
 
-    // Лайки/Дизлайки (Уникальный ключ по user_id + video_id предотвращает дюпы)
+    // Лайки/Дизлайки
     db.run(`CREATE TABLE IF NOT EXISTS votes (
         user_id INTEGER,
         video_id INTEGER,
@@ -90,13 +95,14 @@ db.serialize(() => {
 
 // --- НАСТРОЙКА MULTER ДЛЯ ЗАГРУЗКИ ---
 const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, UPLOADS_PATH), // Используем абсолютный путь
+    destination: (req, file, cb) => cb(null, UPLOADS_PATH),
     filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
 });
 const upload = multer({ storage: storage });
 
+// --- MIDDLEWARE АВТОРИЗАЦИИ ---
 const checkAuth = (req, res, next) => {
-    const userId = req.cookies.user_id; // <-- Здесь мы ищем user_id
+    const userId = req.cookies.user_id;
     if (!userId) return res.status(401).json({ error: 'Не авторизован' });
     req.userId = userId;
     next();
@@ -116,8 +122,13 @@ app.post('/api/register', upload.single('avatar'), async (req, res) => {
     db.run(`INSERT INTO users (username, password, avatar) VALUES (?, ?, ?)`, 
         [username, hash, avatar], 
         function(err) {
-            if (err) return res.json({ success: false, message: "Пользователь с таким именем уже существует" });
-            res.cookie('user_id', this.lastID, { httpOnly: true });
+            if (err) {
+                // Если ошибка (например, UNIQUE constraint), удаляем загруженный аватар
+                if (req.file) fs.unlink(req.file.path, () => {});
+                return res.json({ success: false, message: "Пользователь с таким именем уже существует" });
+            }
+            // Установка куки с MaxAge для сохранения аккаунта
+            res.cookie('user_id', this.lastID, { httpOnly: true, maxAge: COOKIE_MAX_AGE });
             res.json({ success: true, user_id: this.lastID });
         }
     );
@@ -130,7 +141,8 @@ app.post('/api/login', (req, res) => {
         if (!user || !(await bcrypt.compare(password, user.password))) {
             return res.json({ success: false, message: "Неверный логин или пароль" });
         }
-        res.cookie('user_id', user.id, { httpOnly: true });
+        // Установка куки с MaxAge для сохранения аккаунта
+        res.cookie('user_id', user.id, { httpOnly: true, maxAge: COOKIE_MAX_AGE });
         res.json({ success: true, user: user });
     });
 });
@@ -151,6 +163,7 @@ app.post('/api/update-avatar', checkAuth, upload.single('avatar'), (req, res) =>
     });
 });
 
+// Загрузка видео
 app.post('/api/upload', checkAuth, upload.fields([{ name: 'video', maxCount: 1 }, { name: 'thumbnail', maxCount: 1 }]), (req, res) => {
     const { title, description } = req.body;
     
@@ -167,7 +180,7 @@ app.post('/api/upload', checkAuth, upload.fields([{ name: 'video', maxCount: 1 }
         function(err) {
             if(err) {
                 console.error("КРИТИЧЕСКАЯ ОШИБКА БД ПРИ ЗАГРУЗКЕ ВИДЕО:", err);
-                // Если произошла ошибка в БД, нужно удалить загруженные файлы
+                // Если ошибка в БД, удаляем загруженные файлы
                 fs.unlink(path.join(UPLOADS_PATH, videoFile), () => {});
                 fs.unlink(path.join(UPLOADS_PATH, thumbFile), () => {});
                 
@@ -193,7 +206,9 @@ app.get('/api/videos', (req, res) => {
 app.get('/api/video/:id', (req, res) => {
     const videoId = req.params.id;
     
-    // Считаем просмотр 
+    // --- ВАЖНО: Накрутка просмотров ---
+    // В MVP мы просто увеличиваем счетчик. Для предотвращения накрутки 
+    // нужно добавить логику проверки IP или куки пользователя (см. предыдущий ответ).
     db.run(`UPDATE videos SET views = views + 1 WHERE id = ?`, [videoId]);
     
     // Получаем данные
@@ -215,7 +230,7 @@ app.get('/api/video/:id', (req, res) => {
                 WHERE video_id = ? ORDER BY c.created_at DESC`, [videoId], (err, comments) => {
             res.json({ video, comments });
             
-            // Обновляем счетчик просмотров в реальном времени у всех пользователей
+            // Обновляем счетчик просмотров в реальном времени
             io.emit('update_view_count', { videoId, views: video.views + 1 });
         });
     });
@@ -239,14 +254,11 @@ io.on('connection', (socket) => {
         db.get(`SELECT type FROM votes WHERE user_id = ? AND video_id = ?`, [userId, videoId], (err, row) => {
             if (row) {
                 if (row.type === type) {
-                    // Отмена голоса
                     db.run(`DELETE FROM votes WHERE user_id = ? AND video_id = ?`, [userId, videoId]);
                 } else {
-                    // Смена голоса
                     db.run(`UPDATE votes SET type = ? WHERE user_id = ? AND video_id = ?`, [type, userId, videoId]);
                 }
             } else {
-                // Новый голос
                 db.run(`INSERT INTO votes (user_id, video_id, type) VALUES (?, ?, ?)`, [userId, videoId, type]);
             }
 
