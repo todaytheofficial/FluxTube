@@ -7,13 +7,13 @@ const multer = require('multer');
 const bcrypt = require('bcrypt');
 const cookieParser = require('cookie-parser');
 const path = require('path');
-const fs = require('fs'); // Для работы с файловой системой
+const fs = require('fs');
 
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server);
 
-// --- НАСТРОЙКА ---
+// --- НАСТРОЙКА ПУТЕЙ И ПЕРЕМЕННЫХ ---
 const PORT = 3000;
 const DB_PATH = './database/video_hosting.db';
 const UPLOADS_PATH = path.join(__dirname, 'uploads');
@@ -22,7 +22,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
-// --- НАСТРОЙКА СТАТИЧЕСКИХ ФАЙЛОВ И АВТОСОЗДАНИЕ ПАПОК --
+// --- АВТОМАТИЧЕСКОЕ СОЗДАНИЕ ПАПОК ДЛЯ УСТРАНЕНИЯ ОШИБОК ENOENT / CANTOPEN ---
 
 // Проверяем и создаем папку database
 const dbDir = path.dirname(DB_PATH);
@@ -90,7 +90,7 @@ db.serialize(() => {
 
 // --- НАСТРОЙКА MULTER ДЛЯ ЗАГРУЗКИ ---
 const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, UPLOADS_PATH),
+    destination: (req, file, cb) => cb(null, UPLOADS_PATH), // Используем абсолютный путь
     filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
 });
 const upload = multer({ storage: storage });
@@ -156,8 +156,8 @@ app.post('/api/update-avatar', checkAuth, upload.single('avatar'), (req, res) =>
 app.post('/api/upload', checkAuth, upload.fields([{ name: 'video', maxCount: 1 }, { name: 'thumbnail', maxCount: 1 }]), (req, res) => {
     const { title, description } = req.body;
     
-    // Проверка наличия файлов
     if (!req.files || !req.files['video'] || !req.files['thumbnail']) {
+        console.error("Multer: Отсутствует видео или обложка.");
         return res.status(400).json({ success: false, message: "Отсутствует видео или обложка." });
     }
 
@@ -168,7 +168,11 @@ app.post('/api/upload', checkAuth, upload.fields([{ name: 'video', maxCount: 1 }
         [req.userId, title, description, `/uploads/${videoFile}`, `/uploads/${thumbFile}`],
         function(err) {
             if(err) {
-                console.error("DB Error on upload:", err);
+                console.error("КРИТИЧЕСКАЯ ОШИБКА БД ПРИ ЗАГРУЗКЕ ВИДЕО:", err);
+                // Если произошла ошибка в БД, нужно удалить загруженные файлы
+                fs.unlink(path.join(UPLOADS_PATH, videoFile), () => {});
+                fs.unlink(path.join(UPLOADS_PATH, thumbFile), () => {});
+                
                 return res.status(500).json({success: false, message: "Ошибка базы данных при сохранении видео."});
             }
             // Уведомляем всех через Socket.io о новом видео
@@ -191,7 +195,7 @@ app.get('/api/videos', (req, res) => {
 app.get('/api/video/:id', (req, res) => {
     const videoId = req.params.id;
     
-    // Считаем просмотр (без проверки уникальности, просто +1)
+    // Считаем просмотр 
     db.run(`UPDATE videos SET views = views + 1 WHERE id = ?`, [videoId]);
     
     // Получаем данные
@@ -220,7 +224,6 @@ app.get('/api/video/:id', (req, res) => {
 });
 
 // --- URL Routing для SPA ---
-// Отдаем index.html для всех кастомных роутов, фронтенд обрабатывает их через JS (History API)
 app.get('/:channelName/:channelId', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
@@ -238,10 +241,10 @@ io.on('connection', (socket) => {
         db.get(`SELECT type FROM votes WHERE user_id = ? AND video_id = ?`, [userId, videoId], (err, row) => {
             if (row) {
                 if (row.type === type) {
-                    // Если голос тот же — удаляем (отмена голоса)
+                    // Отмена голоса
                     db.run(`DELETE FROM votes WHERE user_id = ? AND video_id = ?`, [userId, videoId]);
                 } else {
-                    // Если голос другой — обновляем (смена лайка на дизлайк и наоборот)
+                    // Смена голоса
                     db.run(`UPDATE votes SET type = ? WHERE user_id = ? AND video_id = ?`, [type, userId, videoId]);
                 }
             } else {
@@ -257,7 +260,7 @@ io.on('connection', (socket) => {
                  `, [videoId, videoId], (err, stats) => {
                      io.emit('update_votes', { videoId, ...stats });
                  });
-            }, 50); // Небольшая задержка, чтобы БД успела обновиться
+            }, 50); 
         });
     });
 
@@ -266,11 +269,9 @@ io.on('connection', (socket) => {
         const { videoId, userId, text } = data;
         
         db.run(`INSERT INTO comments (user_id, video_id, text) VALUES (?, ?, ?)`, [userId, videoId, text], function() {
-            // Получаем инфо о юзере для отображения
             db.get(`SELECT username, avatar FROM users WHERE id = ?`, [userId], (err, user) => {
                 if (err || !user) return;
                 
-                // Отправляем новый комментарий всем
                 io.emit('new_comment', { 
                     videoId, 
                     comment: { 
@@ -278,7 +279,7 @@ io.on('connection', (socket) => {
                         text, 
                         username: user.username, 
                         avatar: user.avatar, 
-                        created_at: new Date().toISOString() // Отправляем в ISO для правильного отображения времени
+                        created_at: new Date().toISOString() 
                     } 
                 });
             });
