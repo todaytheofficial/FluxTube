@@ -1,0 +1,133 @@
+:root {
+    --bg: #0f0f13;
+    --card-bg: #1a1a20;
+    --primary: #00f2ea; /* Неон циан */
+    --secondary: #ff0055; /* Неон маджента */
+    --text: #ffffff;
+    --text-muted: #a0a0b0;
+    --glass: rgba(255, 255, 255, 0.05);
+}
+
+body {
+    margin: 0;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: var(--bg);
+    color: var(--text);
+    overflow-x: hidden;
+}
+
+/* Навигация */
+.navbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 20px;
+    height: 60px;
+    background: rgba(15, 15, 19, 0.8);
+    backdrop-filter: blur(10px);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    border-bottom: 1px solid var(--glass);
+}
+
+/* Обновленный логотип */
+.logo { 
+    display: flex; 
+    align-items: center; 
+    gap: 10px; 
+    cursor: pointer; 
+    font-weight: 800; /* Жирнее */
+    font-size: 1.4rem; 
+    letter-spacing: -1px; /* Стильное сжатие букв */
+    color: #fff;
+    text-transform: uppercase;
+}
+
+.logo span {
+    background: linear-gradient(90deg, var(--primary), #ffffff);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent; /* Градиентный текст */
+}
+
+.logo svg { 
+    fill: var(--primary); 
+    filter: drop-shadow(0 0 5px var(--primary)); /* Свечение иконки */
+}
+
+.search-bar input {
+    background: var(--card-bg);
+    border: none;
+    padding: 10px 15px;
+    border-radius: 20px;
+    color: white;
+    width: 300px;
+    outline: none;
+}
+
+.user-menu img { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; cursor: pointer; }
+button {
+    background: var(--primary);
+    border: none;
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+    color: #000;
+    transition: 0.3s;
+}
+button:hover { box-shadow: 0 0 10px var(--primary); }
+
+/* Сетка видео */
+.video-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 20px;
+    padding: 20px;
+}
+
+.video-card {
+    background: var(--card-bg);
+    border-radius: 10px;
+    overflow: hidden;
+    transition: transform 0.2s;
+    cursor: pointer;
+}
+.video-card:hover { transform: translateY(-5px); }
+.thumb { width: 100%; aspect-ratio: 16/9; object-fit: cover; }
+.info { padding: 10px; display: flex; gap: 10px; }
+.info-avatar { width: 36px; height: 36px; border-radius: 50%; }
+.meta h3 { margin: 0 0 5px 0; font-size: 1rem; }
+.meta p { margin: 0; color: var(--text-muted); font-size: 0.8rem; }
+
+/* Плеер */
+.player-container { display: flex; gap: 20px; padding: 20px; max-width: 1400px; margin: 0 auto; }
+.video-stage { flex: 3; }
+.video-wrapper video { width: 100%; border-radius: 10px; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+.video-stats { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
+.actions button { background: var(--glass); color: white; margin-left: 5px; }
+.actions button.active { color: var(--secondary); }
+
+.comments-section { flex: 1; background: var(--card-bg); padding: 15px; border-radius: 10px; height: fit-content; }
+.comment { display: flex; gap: 10px; margin-bottom: 15px; border-bottom: 1px solid var(--glass); padding-bottom: 10px; }
+.comment-avatar { width: 30px; height: 30px; border-radius: 50%; }
+
+/* Канал */
+.channel-header {
+    background: linear-gradient(45deg, #1a1a20, #2a2a35);
+    padding: 40px 20px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+}
+.channel-big-avatar { width: 100px; height: 100px; border-radius: 50%; border: 3px solid var(--primary); }
+
+/* Модальные окна */
+.modal-overlay {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.8); z-index: 1000;
+    display: flex; justify-content: center; align-items: center;
+}
+.modal { background: var(--card-bg); padding: 30px; border-radius: 10px; width: 400px; position: relative; }
+.hidden { display: none; }
+input, textarea { width: 100%; margin-bottom: 10px; padding: 10px; background: #000; border: 1px solid #333; color: white; border-radius: 5px; box-sizing: border-box;}
