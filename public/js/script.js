@@ -1,5 +1,7 @@
 const socket = io();
 let currentUser = null;
+const formData = new FormData(form);
+
 
 const app = {
     init: () => {
@@ -293,7 +295,7 @@ document.getElementById('authForm').onsubmit = async (e) => {
 document.getElementById('uploadForm').onsubmit = async (e) => {
     e.preventDefault();
     const body = new FormData(e.target);
-    const res = await fetch('/api/upload', { method: 'POST', body: body });
+    fetch('/api/upload', { method: 'POST', body: formData})
     const json = await res.json();
     if(json.success) {
         app.closeModal();

@@ -95,9 +95,8 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage: storage });
 
-// --- MIDDLEWARE АВТОРИЗАЦИИ ---
 const checkAuth = (req, res, next) => {
-    const userId = req.cookies.user_id;
+    const userId = req.cookies.user_id; // <-- Здесь мы ищем user_id
     if (!userId) return res.status(401).json({ error: 'Не авторизован' });
     req.userId = userId;
     next();
@@ -152,7 +151,6 @@ app.post('/api/update-avatar', checkAuth, upload.single('avatar'), (req, res) =>
     });
 });
 
-// Загрузка видео
 app.post('/api/upload', checkAuth, upload.fields([{ name: 'video', maxCount: 1 }, { name: 'thumbnail', maxCount: 1 }]), (req, res) => {
     const { title, description } = req.body;
     
