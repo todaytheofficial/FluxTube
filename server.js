@@ -7,7 +7,7 @@ const multer = require('multer');
 const bcrypt = require('bcrypt');
 const cookieParser = require('cookie-parser');
 const path = require('path');
-const fs = require('fs');
+const fs = require('fs'); // Для работы с файловой системой
 
 const app = express();
 const server = http.createServer(app);
@@ -16,14 +16,35 @@ const io = socketIo(server);
 // --- НАСТРОЙКА ---
 const PORT = 3000;
 const DB_PATH = './database/video_hosting.db';
+const UPLOADS_PATH = path.join(__dirname, 'uploads');
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
-app.use(express.static('public'));
-app.use('/uploads', express.static('uploads'));
 
-// --- БАЗА ДАННЫХ ---
+// --- НАСТРОЙКА СТАТИЧЕСКИХ ФАЙЛОВ И АВТОСОЗДАНИЕ ПАПОК ---
+
+// Проверяем и создаем папку database
+const dbDir = path.dirname(DB_PATH);
+if (!fs.existsSync(dbDir)){
+    fs.mkdirSync(dbDir);
+    console.log('Папка database создана.');
+}
+
+// Проверяем и создаем папку uploads
+if (!fs.existsSync(UPLOADS_PATH)){
+    fs.mkdirSync(UPLOADS_PATH);
+    console.log('Папка uploads создана.');
+}
+
+// 1. Обслуживание статических файлов из public (HTML, CSS, Frontend JS)
+app.use(express.static('public'));
+
+// 2. Обслуживание загруженных файлов по URL /uploads (Видео, Обложки, Аватары)
+app.use('/uploads', express.static(UPLOADS_PATH)); 
+
+
+// --- БАЗА ДАННЫХ (SQLite) ---
 const db = new sqlite3.Database(DB_PATH);
 
 db.serialize(() => {
@@ -49,7 +70,7 @@ db.serialize(() => {
         FOREIGN KEY(author_id) REFERENCES users(id)
     )`);
 
-    // Лайки/Дизлайки (Уникальная пара user_id + video_id предотвращает дюпы)
+    // Лайки/Дизлайки (Уникальный ключ по user_id + video_id предотвращает дюпы)
     db.run(`CREATE TABLE IF NOT EXISTS votes (
         user_id INTEGER,
         video_id INTEGER,
@@ -67,9 +88,9 @@ db.serialize(() => {
     )`);
 });
 
-// --- ЗАГРУЗКА ФАЙЛОВ ---
+// --- НАСТРОЙКА MULTER ДЛЯ ЗАГРУЗКИ ---
 const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, 'uploads/'),
+    destination: (req, file, cb) => cb(null, UPLOADS_PATH),
     filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
 });
 const upload = multer({ storage: storage });
@@ -96,7 +117,7 @@ app.post('/api/register', upload.single('avatar'), async (req, res) => {
     db.run(`INSERT INTO users (username, password, avatar) VALUES (?, ?, ?)`, 
         [username, hash, avatar], 
         function(err) {
-            if (err) return res.json({ success: false, message: "Пользователь уже существует" });
+            if (err) return res.json({ success: false, message: "Пользователь с таким именем уже существует" });
             res.cookie('user_id', this.lastID, { httpOnly: true });
             res.json({ success: true, user_id: this.lastID });
         }
@@ -132,16 +153,25 @@ app.post('/api/update-avatar', checkAuth, upload.single('avatar'), (req, res) =>
 });
 
 // Загрузка видео
-app.post('/api/upload', checkAuth, upload.fields([{ name: 'video' }, { name: 'thumbnail' }]), (req, res) => {
+app.post('/api/upload', checkAuth, upload.fields([{ name: 'video', maxCount: 1 }, { name: 'thumbnail', maxCount: 1 }]), (req, res) => {
     const { title, description } = req.body;
+    
+    // Проверка наличия файлов
+    if (!req.files || !req.files['video'] || !req.files['thumbnail']) {
+        return res.status(400).json({ success: false, message: "Отсутствует видео или обложка." });
+    }
+
     const videoFile = req.files['video'][0].filename;
     const thumbFile = req.files['thumbnail'][0].filename;
 
     db.run(`INSERT INTO videos (author_id, title, description, filename, thumbnail) VALUES (?, ?, ?, ?, ?)`,
         [req.userId, title, description, `/uploads/${videoFile}`, `/uploads/${thumbFile}`],
         function(err) {
-            if(err) return res.json({success: false});
-            // Уведомляем всех через Socket.io
+            if(err) {
+                console.error("DB Error on upload:", err);
+                return res.status(500).json({success: false, message: "Ошибка базы данных при сохранении видео."});
+            }
+            // Уведомляем всех через Socket.io о новом видео
             io.emit('new_video', { id: this.lastID, title, thumbnail: `/uploads/${thumbFile}` });
             res.json({ success: true });
         }
@@ -161,7 +191,7 @@ app.get('/api/videos', (req, res) => {
 app.get('/api/video/:id', (req, res) => {
     const videoId = req.params.id;
     
-    // Считаем просмотр (простая защита от F5 - можно улучшить через сессии, но для примера хватит)
+    // Считаем просмотр (без проверки уникальности, просто +1)
     db.run(`UPDATE videos SET views = views + 1 WHERE id = ?`, [videoId]);
     
     // Получаем данные
@@ -175,45 +205,43 @@ app.get('/api/video/:id', (req, res) => {
     `;
     
     db.get(query, [videoId], (err, video) => {
-        if(!video) return res.status(404).json({error: "Video not found"});
+        if(err || !video) return res.status(404).json({error: "Video not found"});
         
         // Получаем комментарии
         db.all(`SELECT c.*, u.username, u.avatar FROM comments c 
                 JOIN users u ON c.user_id = u.id 
                 WHERE video_id = ? ORDER BY c.created_at DESC`, [videoId], (err, comments) => {
             res.json({ video, comments });
+            
+            // Обновляем счетчик просмотров в реальном времени у всех пользователей
             io.emit('update_view_count', { videoId, views: video.views + 1 });
         });
     });
 });
 
-// --- URL Routing для Каналов ---
+// --- URL Routing для SPA ---
+// Отдаем index.html для всех кастомных роутов, фронтенд обрабатывает их через JS (History API)
 app.get('/:channelName/:channelId', (req, res) => {
-    // В SPA мы просто отдаем index.html, фронт сам разберет URL
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Для прямых ссылок на видео (video/123)
 app.get('/watch/:id', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // --- SOCKET.IO REALTIME ---
 io.on('connection', (socket) => {
-    // Лайки/Дизлайки
+    // Обработка Лайков/Дизлайков
     socket.on('vote', async (data) => {
-        // data = { videoId, type, userId }
-        // В реальном проекте userId берем из сессии сокета, здесь доверяем для простоты
         const { videoId, type, userId } = data;
         
-        // Проверяем голос
         db.get(`SELECT type FROM votes WHERE user_id = ? AND video_id = ?`, [userId, videoId], (err, row) => {
             if (row) {
                 if (row.type === type) {
-                    // Если уже стоит такой же - убираем (toggle)
+                    // Если голос тот же — удаляем (отмена голоса)
                     db.run(`DELETE FROM votes WHERE user_id = ? AND video_id = ?`, [userId, videoId]);
                 } else {
-                    // Если другой - меняем
+                    // Если голос другой — обновляем (смена лайка на дизлайк и наоборот)
                     db.run(`UPDATE votes SET type = ? WHERE user_id = ? AND video_id = ?`, [type, userId, videoId]);
                 }
             } else {
@@ -221,7 +249,7 @@ io.on('connection', (socket) => {
                 db.run(`INSERT INTO votes (user_id, video_id, type) VALUES (?, ?, ?)`, [userId, videoId, type]);
             }
 
-            // Отправляем обновленные счетчики всем
+            // Отправляем обновленные счетчики всем клиентам
             setTimeout(() => {
                  db.get(`SELECT 
                     (SELECT COUNT(*) FROM votes WHERE video_id = ? AND type = 'like') as likes,
@@ -229,19 +257,29 @@ io.on('connection', (socket) => {
                  `, [videoId, videoId], (err, stats) => {
                      io.emit('update_votes', { videoId, ...stats });
                  });
-            }, 100);
+            }, 50); // Небольшая задержка, чтобы БД успела обновиться
         });
     });
 
-    // Комментарии
+    // Обработка Комментариев
     socket.on('send_comment', (data) => {
         const { videoId, userId, text } = data;
+        
         db.run(`INSERT INTO comments (user_id, video_id, text) VALUES (?, ?, ?)`, [userId, videoId, text], function() {
             // Получаем инфо о юзере для отображения
             db.get(`SELECT username, avatar FROM users WHERE id = ?`, [userId], (err, user) => {
+                if (err || !user) return;
+                
+                // Отправляем новый комментарий всем
                 io.emit('new_comment', { 
                     videoId, 
-                    comment: { id: this.lastID, text, username: user.username, avatar: user.avatar, created_at: new Date() } 
+                    comment: { 
+                        id: this.lastID, 
+                        text, 
+                        username: user.username, 
+                        avatar: user.avatar, 
+                        created_at: new Date().toISOString() // Отправляем в ISO для правильного отображения времени
+                    } 
                 });
             });
         });
