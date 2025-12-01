@@ -15,9 +15,12 @@ const app = {
     // ------------------------------------
 
     init: () => {
+        // Добавляем прослушивание события popstate для корректной навигации браузера
+        window.addEventListener('popstate', app.route); 
+        
         app.checkUserStatus();
         app.setupSocketListeners();
-        app.route(); 
+        // app.route() вызывается после checkUserStatus для уверенности, что user загружен
         
         // Настройка прослушивания событий модальных окон
         document.getElementById('authForm').onsubmit = app.handleAuthSubmit;
@@ -26,7 +29,7 @@ const app = {
 
     route: () => {
         const path = window.location.pathname.split('/').filter(p => p);
-        if (path.length === 0) {
+        if (path.length === 0 || path[0] === 'index.html') {
             app.loadFeed();
         } else if (path[0] === 'watch' && path[1]) {
             app.loadVideoPage(path[1]);
@@ -36,6 +39,12 @@ const app = {
             app.loadFeed(); // Fallback на ленту
         }
     },
+    
+    // Обновление истории браузера
+    navigate: (path) => {
+        window.history.pushState({}, '', path);
+        app.route();
+    },
 
     // ------------------------------------
     // 2. АВТОРИЗАЦИЯ И МОДАЛЬНЫЕ ОКНА
@@ -43,12 +52,11 @@ const app = {
     
     checkUserStatus: async () => {
         const response = await fetch('/api/me');
-        if (response.ok) {
-            app.user = await response.json();
-        } else {
-            app.user = null;
-        }
+        // Возвращает null, если не авторизован
+        app.user = await response.json(); 
         app.renderUserMenu();
+        // Теперь вызываем роутинг, чтобы страница загрузилась, когда user готов
+        app.route();
     },
 
     renderUserMenu: () => {
@@ -57,8 +65,17 @@ const app = {
         
         if (app.user) {
             menu.innerHTML = `
-                <button onclick="app.showModal('upload')">Загрузить</button>
-                <img src="${app.user.avatar}" onclick="app.loadChannelPage(${app.user.id})" alt="${app.user.username}">
+                <button class="icon-btn" onclick="app.showModal('upload')">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="var(--primary)">
+                        <path d="M19 12h-6v6h-2v-6H5v-2h6V4h2v6h6z"/>
+                    </svg>
+                </button>
+                <img src="${app.user.avatar}" onclick="app.navigate('/channel/${app.user.id}')" alt="${app.user.username}" class="user-avatar">
+                <button class="icon-btn" onclick="app.handleLogout()">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="var(--text-muted)">
+                         <path d="M17 7l-1.41 1.41L18.17 11H9v2h9.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"/>
+                    </svg>
+                </button>
             `;
         } else {
             menu.innerHTML = `<button onclick="app.showModal('login')">Войти</button>`;
@@ -69,7 +86,11 @@ const app = {
         const overlay = document.getElementById('modalOverlay');
         const authModal = document.getElementById('authModal');
         const uploadModal = document.getElementById('uploadModal');
-
+        
+        // Сброс форм
+        document.getElementById('authForm').reset();
+        document.getElementById('uploadForm').reset();
+        
         overlay.classList.remove('hidden');
         authModal.classList.add('hidden');
         uploadModal.classList.add('hidden');
@@ -85,8 +106,6 @@ const app = {
 
     closeModal: () => {
         document.getElementById('modalOverlay').classList.add('hidden');
-        document.getElementById('authForm').reset();
-        document.getElementById('uploadForm').reset();
     },
 
     toggleAuthMode: (isRegister = null) => {
@@ -120,19 +139,44 @@ const app = {
         const formData = new FormData(form);
         const isRegister = document.getElementById('regFields').classList.contains('active');
         const endpoint = isRegister ? '/api/register' : '/api/login';
+        
+        // Для входа, если это не регистрация, отправляем JSON
+        let bodyContent = formData;
+        let headers = {};
+        if (!isRegister) {
+            bodyContent = JSON.stringify(Object.fromEntries(formData.entries()));
+            headers['Content-Type'] = 'application/json';
+        }
 
-        const response = await fetch(endpoint, {
-            method: 'POST',
-            body: formData, 
-        });
-        const result = await response.json();
+        try {
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                body: bodyContent, 
+                headers: headers
+            });
+            const result = await response.json();
 
-        if (result.success) {
-            await app.checkUserStatus(); 
-            app.closeModal();
-            app.loadFeed(); 
-        } else {
-            alert(result.message || "Ошибка авторизации/регистрации.");
+            if (result.success) {
+                app.user = isRegister ? 
+                    { id: result.user_id, username: formData.get('username'), avatar: result.avatar || '/img/default_avatar.svg' } : 
+                    result.user;
+                app.closeModal();
+                app.renderUserMenu(); 
+                app.loadFeed(); 
+            } else {
+                alert(result.message || "Ошибка авторизации/регистрации.");
+            }
+        } catch (error) {
+            alert("Сетевая ошибка. Проверьте соединение.");
+        }
+    },
+    
+    handleLogout: async () => {
+        const response = await fetch('/api/logout', { method: 'POST' });
+        if (response.ok) {
+            app.user = null;
+            app.renderUserMenu();
+            app.loadFeed();
         }
     },
 
@@ -142,27 +186,38 @@ const app = {
 
         const form = e.target;
         const formData = new FormData(form);
+        const submitBtn = form.querySelector('button[type="submit"]');
         
         const videoFile = formData.get('video');
         const thumbnailFile = formData.get('thumbnail');
 
-        if (!videoFile || !thumbnailFile || videoFile.size === 0 || thumbnailFile.size === 0) {
-            return alert("Пожалуйста, выберите видео и обложку.");
+        if (!formData.get('title') || !videoFile || !thumbnailFile || videoFile.size === 0 || thumbnailFile.size === 0) {
+            return alert("Пожалуйста, заполните название, выберите видео и обложку.");
         }
+        
+        submitBtn.textContent = 'Загрузка...';
+        submitBtn.disabled = true;
 
-        const response = await fetch('/api/upload', {
-            method: 'POST',
-            body: formData,
-        });
+        try {
+            const response = await fetch('/api/upload', {
+                method: 'POST',
+                body: formData,
+            });
 
-        const result = await response.json();
-        if (result.success) {
-            alert("Видео успешно опубликовано!");
-            app.closeModal();
-            form.reset();
-            app.loadFeed(); 
-        } else {
-            alert(result.message || "Ошибка при загрузке видео.");
+            const result = await response.json();
+            if (result.success) {
+                alert("Видео успешно опубликовано!");
+                app.closeModal();
+                form.reset();
+                app.loadFeed(); 
+            } else {
+                alert(result.message || "Ошибка при загрузке видео.");
+            }
+        } catch (error) {
+            alert("Сетевая ошибка при загрузке.");
+        } finally {
+            submitBtn.textContent = 'Опубликовать';
+            submitBtn.disabled = false;
         }
     },
     
@@ -181,7 +236,13 @@ const app = {
             const btn = document.getElementById('subscribeBtn');
             const countElem = document.querySelector('.subscriber-count');
             
-            const currentCount = parseInt(countElem.textContent.split(' ')[0].replace(/[^0-9]/g, ''));
+            // Обновляем счетчик
+            let currentCountText = countElem.textContent.split(' ')[0].replace(/[^0-9K M]/g, '');
+            let currentCount;
+            if (currentCountText.includes('M')) currentCount = parseFloat(currentCountText) * 1000000;
+            else if (currentCountText.includes('K')) currentCount = parseFloat(currentCountText) * 1000;
+            else currentCount = parseInt(currentCountText) || 0;
+            
             const newCount = currentCount + (result.is_subscribed ? 1 : -1);
             
             countElem.textContent = `${app.formatViews(newCount)} подписчиков`;
@@ -189,12 +250,13 @@ const app = {
             if (result.is_subscribed) {
                 btn.classList.add('subscribed');
                 btn.textContent = '✔️ Подписка оформлена';
-                btn.setAttribute('onclick', `app.handleSubscribe(${channelId}, true)`);
             } else {
                 btn.classList.remove('subscribed');
                 btn.textContent = 'Подписаться';
-                btn.setAttribute('onclick', `app.handleSubscribe(${channelId}, false)`);
             }
+            // Обновляем onclick на текущем элементе
+            btn.setAttribute('onclick', `app.handleSubscribe(${channelId}, ${result.is_subscribed})`);
+            
         } else {
             alert(result.message || "Ошибка при выполнении операции подписки.");
         }
@@ -206,192 +268,242 @@ const app = {
     
     // Рендер главной ленты
     loadFeed: async () => {
-        window.history.pushState({}, '', '/');
+        app.navigate('/');
+        app.currentVideo = null;
         const content = document.getElementById('appContent');
         content.innerHTML = '<h2>Загрузка ленты...</h2>';
 
-        const response = await fetch('/api/videos');
-        const videos = await response.json();
-        
-        let html = '<div class="video-grid">';
-        
-        if (videos.length === 0) {
-            html = '<h2 style="text-align: center; color: var(--text-muted); padding: 50px;">Видео пока нет. Станьте первым!</h2>';
-        } else {
-            videos.forEach(v => {
-                html += `
-                    <div class="video-card" onclick="app.loadVideoPage(${v.id})">
-                        <img class="thumb" src="${v.thumbnail}" alt="${v.title}">
-                        <div class="info">
-                            <img class="info-avatar" src="${v.author_avatar}" alt="${v.username}">
-                            <div class="meta">
-                                <h3>${v.title}</h3>
-                                <p>${v.username} • ${app.formatViews(v.views)} • ${app.timeAgo(v.created_at)}</p>
+        try {
+            const response = await fetch('/api/videos');
+            const videos = await response.json();
+            
+            let html = '<div class="video-grid">';
+            
+            if (videos.length === 0) {
+                html = '<h2 style="text-align: center; color: var(--text-muted); padding: 50px;">Видео пока нет. Станьте первым!</h2>';
+            } else {
+                videos.forEach(v => {
+                    html += `
+                        <div class="video-card" onclick="app.navigate('/watch/${v.id}')">
+                            <img class="thumb" src="${v.thumbnail}" alt="${v.title}">
+                            <div class="info">
+                                <img class="info-avatar" src="${v.author_avatar}" onclick="event.stopPropagation(); app.navigate('/channel/${v.author_id}')" alt="${v.username}">
+                                <div class="meta">
+                                    <h3>${v.title}</h3>
+                                    <p>${v.username} • ${app.formatViews(v.views)} • ${app.timeAgo(v.created_at)}</p>
+                                </div>
                             </div>
                         </div>
-                    </div>
-                `;
-            });
-            html += '</div>';
+                    `;
+                });
+                html += '</div>';
+            }
+            content.innerHTML = html;
+        } catch (error) {
+            content.innerHTML = '<h2>Ошибка загрузки ленты.</h2>';
         }
-
-        content.innerHTML = html;
     },
 
     // Рендер страницы просмотра видео
     loadVideoPage: async (videoId) => {
-        window.history.pushState({}, '', `/watch/${videoId}`);
+        app.navigate(`/watch/${videoId}`);
+        app.currentVideo = videoId; 
         const content = document.getElementById('appContent');
         content.innerHTML = '<h2>Загрузка видео...</h2>';
-        app.currentVideo = videoId; 
-
-        const response = await fetch(`/api/video/${videoId}`);
-        if (!response.ok) {
-            content.innerHTML = '<h2>Видео не найдено (404)</h2>';
-            return;
-        }
         
-        const data = await response.json();
-        const video = data.video;
-        const comments = data.comments;
-
-        let html = `
-            <div class="player-container">
-                <div class="video-stage">
-                    <div class="video-wrapper">
-                        <video id="videoPlayer" width="100%" controls autoplay>
-                            <source src="${video.filename}" type="video/mp4">
-                            Ваш браузер не поддерживает HTML5 видео.
-                        </video>
+        try {
+            const response = await fetch(`/api/video/${videoId}`);
+            if (!response.ok) {
+                content.innerHTML = '<h2>Видео не найдено (404)</h2>';
+                return;
+            }
+            
+            const data = await response.json();
+            const video = data.video;
+            const comments = data.comments;
+            
+            // Определяем класс для кнопок лайков/дизлайков
+            const userVote = video.user_vote_type || 'none';
+            
+            let html = `
+                <div class="video-page-container">
+                    <div class="video-stage">
+                        <div class="video-wrapper">
+                            <video id="videoPlayer" width="100%" controls autoplay poster="${video.thumbnail}">
+                                <source src="${video.filename}" type="video/mp4">
+                                Ваш браузер не поддерживает HTML5 видео.
+                            </video>
+                        </div>
+                        
+                        <div class="video-details">
+                            <h1>${video.title}</h1>
+                            <div class="video-stats">
+                                <span id="viewCount">${app.formatViews(video.views + 1)} просмотров</span>
+                                <div class="actions">
+                                    <button id="likeBtn" 
+                                        onclick="app.handleVote(${video.id}, 'like')" 
+                                        class="${userVote === 'like' ? 'voted' : ''}" 
+                                        data-count="${video.likes}">👍 ${video.likes}</button>
+                                    <button id="dislikeBtn" 
+                                        onclick="app.handleVote(${video.id}, 'dislike')" 
+                                        class="${userVote === 'dislike' ? 'voted' : ''}" 
+                                        data-count="${video.dislikes}">👎 ${video.dislikes}</button>
+                                </div>
+                            </div>
+                            <hr>
+                            <div class="channel-info">
+                                <img src="${video.author_avatar}" onclick="app.navigate('/channel/${video.author_id}')" alt="${video.username}" class="info-avatar">
+                                <div>
+                                    <h3 onclick="app.navigate('/channel/${video.author_id}')">${video.username}</h3>
+                                    <p class="subscriber-count">${app.formatViews(video.subscriber_count)} подписчиков</p>
+                                </div>
+                                ${app.user && app.user.id != video.author_id ? 
+                                    `<button 
+                                        id="subscribeBtn" 
+                                        class="subscribe-btn ${video.is_subscribed > 0 ? 'subscribed' : ''}" 
+                                        onclick="app.handleSubscribe(${video.author_id}, ${video.is_subscribed > 0})"
+                                    >
+                                        ${video.is_subscribed > 0 ? '✔️ Подписка оформлена' : 'Подписаться'}
+                                    </button>` 
+                                    : ''
+                                }
+                            </div>
+                            <div class="video-description-box">
+                                <p>${video.description.replace(/\n/g, '<br>')}</p>
+                            </div>
+                        </div>
                     </div>
                     
-                    <div class="video-details">
-                        <h1>${video.title}</h1>
-                        <div class="video-stats">
-                            <span id="viewCount">${app.formatViews(video.views)} просмотров</span>
-                            <div class="actions">
-                                <button id="likeBtn" onclick="app.handleVote(${video.id}, 'like')" data-count="${video.likes}">👍 ${video.likes}</button>
-                                <button id="dislikeBtn" onclick="app.handleVote(${video.id}, 'dislike')" data-count="${video.dislikes}">👎 ${video.dislikes}</button>
-                            </div>
+                    <div class="comments-section">
+                        <h3>Комментарии (<span id="commentCount">${comments.length}</span>)</h3>
+                        ${app.user ? `
+                            <form id="commentForm" onsubmit="app.handleCommentSubmit(event, ${video.id}); return false;">
+                                <input type="text" id="commentText" placeholder="Напишите комментарий..." required>
+                                <button type="submit">Отправить</button>
+                            </form>
+                            <hr>` : `<p style="text-align:center; color: var(--text-muted);">Войдите, чтобы комментировать.</p>`
+                        }
+                        <div id="commentsContainer">
+                            ${app.renderComments(comments)}
                         </div>
-                        <hr>
-                        <div class="channel-info">
-                            <img src="${video.author_avatar}" onclick="app.loadChannelPage(${video.author_id})" alt="${video.username}" class="info-avatar">
-                            <div>
-                                <h3 onclick="app.loadChannelPage(${video.author_id})">${video.username}</h3>
-                                <p class="subscriber-count">${app.formatViews(video.subscriber_count)} подписчиков</p>
-                            </div>
-                            ${app.user && app.user.id != video.author_id ? 
-                                `<button 
-                                    id="subscribeBtn" 
-                                    class="subscribe-btn ${video.is_subscribed > 0 ? 'subscribed' : ''}" 
-                                    onclick="app.handleSubscribe(${video.author_id}, ${video.is_subscribed > 0})"
-                                >
-                                    ${video.is_subscribed > 0 ? '✔️ Подписка оформлена' : 'Подписаться'}
-                                </button>` 
-                                : ''
-                            }
-                        </div>
-                        <p>${video.description}</p>
-                    </div>
-                    <div class="comments-list" id="commentsList">
-                        </div>
-                </div>
-                
-                <div class="comments-section">
-                    <h3>Комментарии (<span id="commentCount">${comments.length}</span>)</h3>
-                    ${app.user ? `
-                        <form id="commentForm" onsubmit="app.handleCommentSubmit(event, ${video.id}); return false;">
-                            <input type="text" id="commentText" placeholder="Напишите комментарий..." required>
-                            <button type="submit">Отправить</button>
-                        </form>
-                        <hr>` : `<p style="text-align:center; color: var(--text-muted);">Войдите, чтобы комментировать.</p>`
-                    }
-                    <div id="commentsContainer">
-                        ${app.renderComments(comments)}
                     </div>
                 </div>
-            </div>
-        `;
-        content.innerHTML = html;
+            `;
+            content.innerHTML = html;
+        } catch (error) {
+            console.error(error);
+            content.innerHTML = '<h2>Ошибка загрузки видео.</h2>';
+        }
     },
     
     // Рендер страницы канала
     loadChannelPage: async (userId) => {
-        window.history.pushState({}, '', `/channel/${userId}`);
+        app.navigate(`/channel/${userId}`);
+        app.currentVideo = null;
         const content = document.getElementById('appContent');
         content.innerHTML = '<h2>Загрузка канала...</h2>';
 
-        const response = await fetch(`/api/channel/${userId}`);
-        if (!response.ok) {
-            content.innerHTML = '<h2>Канал не найден (404)</h2>';
-            return;
-        }
-        
-        const data = await response.json();
-        const channel = data.channel;
-        const videos = data.videos;
+        try {
+            const response = await fetch(`/api/channel/${userId}`);
+            if (!response.ok) {
+                content.innerHTML = '<h2>Канал не найден (404)</h2>';
+                return;
+            }
+            
+            const data = await response.json();
+            const channel = data.channel;
+            const videos = data.videos;
 
-        let html = `
-            <div class="channel-page">
-                <div class="channel-header">
-                    <img src="${channel.avatar}" class="channel-big-avatar" alt="${channel.username}">
-                    <div class="channel-meta">
-                        <h1>${channel.username}</h1>
-                        <p class="subscriber-count">${app.formatViews(channel.subscriber_count)} подписчиков</p>
-                        
-                        ${app.user && app.user.id != channel.id ? 
-                            `<button 
-                                id="subscribeBtn" 
-                                class="subscribe-btn ${channel.is_subscribed > 0 ? 'subscribed' : ''}" 
-                                onclick="app.handleSubscribe(${channel.id}, ${channel.is_subscribed > 0})"
-                            >
-                                ${channel.is_subscribed > 0 ? '✔️ Подписка оформлена' : 'Подписаться'}
-                            </button>` 
-                            : ''
-                        }
+            let html = `
+                <div class="channel-page-container">
+                    <div class="channel-header">
+                        <img src="${channel.avatar}" class="channel-big-avatar" alt="${channel.username}">
+                        <div class="channel-meta">
+                            <h1>${channel.username}</h1>
+                            <p class="subscriber-count">${app.formatViews(channel.subscriber_count)} подписчиков</p>
+                            
+                            ${app.user && app.user.id != channel.id ? 
+                                `<button 
+                                    id="subscribeBtn" 
+                                    class="subscribe-btn ${channel.is_subscribed > 0 ? 'subscribed' : ''}" 
+                                    onclick="app.handleSubscribe(${channel.id}, ${channel.is_subscribed > 0})"
+                                >
+                                    ${channel.is_subscribed > 0 ? '✔️ Подписка оформлена' : 'Подписаться'}
+                                </button>` 
+                                : ''
+                            }
+                        </div>
                     </div>
-                </div>
 
-                <div class="channel-videos">
-                    <h3>Видео канала</h3>
-                    <div class="video-grid">
-                        ${videos.length > 0 ? videos.map(v => `
-                            <div class="video-card" onclick="app.loadVideoPage(${v.id})">
-                                <img class="thumb" src="${v.thumbnail}" alt="${v.title}">
-                                <div class="info">
-                                    <img class="info-avatar" src="${channel.avatar}" alt="${channel.username}"> 
-                                    <div class="meta">
-                                        <h3>${v.title}</h3>
-                                        <p>${channel.username} • ${app.formatViews(v.views)} • ${app.timeAgo(v.created_at)}</p>
+                    <hr class="channel-separator">
+
+                    <div class="channel-videos">
+                        <h3>Видео канала (${videos.length})</h3>
+                        <div class="video-grid">
+                            ${videos.length > 0 ? videos.map(v => `
+                                <div class="video-card" onclick="app.navigate('/watch/${v.id}')">
+                                    <img class="thumb" src="${v.thumbnail}" alt="${v.title}">
+                                    <div class="info">
+                                        <img class="info-avatar" src="${channel.avatar}" alt="${channel.username}"> 
+                                        <div class="meta">
+                                            <h3>${v.title}</h3>
+                                            <p>${channel.username} • ${app.formatViews(v.views)} • ${app.timeAgo(v.created_at)}</p>
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
-                        `).join('') : '<p>На этом канале пока нет видео.</p>'}
+                            `).join('') : '<p style="color: var(--text-muted);">На этом канале пока нет видео.</p>'}
+                        </div>
                     </div>
                 </div>
-            </div>
-        `;
-        content.innerHTML = html;
+            `;
+            content.innerHTML = html;
+        } catch (error) {
+            content.innerHTML = '<h2>Ошибка загрузки канала.</h2>';
+        }
     },
 
+    renderComments: (comments) => {
+        if (comments.length === 0) return '<p style="text-align: center; color: var(--text-muted);">Комментариев пока нет.</p>';
+        return comments.map(app.renderSingleComment).join('');
+    },
+    
     // ------------------------------------
     // 4. SOCKET.IO И РЕАЛЬНОЕ ВРЕМЯ
     // ------------------------------------
 
     setupSocketListeners: () => {
         app.socket.on('new_video', (data) => {
-            if (window.location.pathname === '/') {
-                console.log('Новое видео: ', data.title);
-            }
+             // Если на главной странице, перезагружаем ленту или добавляем элемент
+             if (window.location.pathname === '/') app.loadFeed();
         });
 
         app.socket.on('update_votes', (data) => {
             if (data.videoId == app.currentVideo) {
-                document.getElementById('likeBtn').textContent = `👍 ${data.likes}`;
-                document.getElementById('dislikeBtn').textContent = `👎 ${data.dislikes}`;
-                document.getElementById('likeBtn').dataset.count = data.likes;
-                document.getElementById('dislikeBtn').dataset.count = data.dislikes;
+                const likeBtn = document.getElementById('likeBtn');
+                const dislikeBtn = document.getElementById('dislikeBtn');
+                
+                if(likeBtn) {
+                    likeBtn.textContent = `👍 ${data.likes}`;
+                    likeBtn.dataset.count = data.likes;
+                }
+                if(dislikeBtn) {
+                    dislikeBtn.textContent = `👎 ${data.dislikes}`;
+                    dislikeBtn.dataset.count = data.dislikes;
+                }
+            }
+        });
+        
+        // Обновление статуса голосования только для текущего пользователя
+        app.socket.on('my_vote_status', (data) => {
+            if (data.videoId == app.currentVideo) {
+                const likeBtn = document.getElementById('likeBtn');
+                const dislikeBtn = document.getElementById('dislikeBtn');
+                
+                if (likeBtn) likeBtn.classList.remove('voted');
+                if (dislikeBtn) dislikeBtn.classList.remove('voted');
+                
+                if (data.type === 'like') likeBtn.classList.add('voted');
+                else if (data.type === 'dislike') dislikeBtn.classList.add('voted');
             }
         });
 
@@ -407,7 +519,10 @@ const app = {
         
         app.socket.on('update_view_count', (data) => {
             if (data.videoId == app.currentVideo) {
-                document.getElementById('viewCount').textContent = `${app.formatViews(data.views)} просмотров`;
+                const viewCountElem = document.getElementById('viewCount');
+                if (viewCountElem) {
+                    viewCountElem.textContent = `${app.formatViews(data.views)} просмотров`;
+                }
             }
         });
     },
@@ -415,6 +530,7 @@ const app = {
     handleVote: (videoId, type) => {
         if (!app.user) return app.showModal('login');
         
+        // Отправляем запрос через сокет
         app.socket.emit('vote', {
             videoId: videoId,
             type: type,
@@ -426,16 +542,18 @@ const app = {
         e.preventDefault();
         if (!app.user) return app.showModal('login');
 
-        const text = document.getElementById('commentText').value;
+        const commentInput = document.getElementById('commentText');
+        const text = commentInput.value.trim();
         if (!text) return;
         
+        // Отправляем комментарий через сокет
         app.socket.emit('send_comment', {
             videoId: videoId,
             userId: app.user.id,
             text: text
         });
 
-        document.getElementById('commentText').value = ''; 
+        commentInput.value = ''; // Очищаем поле ввода
     },
 
     // ------------------------------------
@@ -443,9 +561,10 @@ const app = {
     // ------------------------------------
 
     formatViews: (num) => {
-        if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
-        if (num >= 1000) return (num / 1000).toFixed(0) + 'K';
-        return num;
+        num = parseInt(num) || 0;
+        if (num >= 1000000) return (num / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+        if (num >= 1000) return (num / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
+        return num.toString();
     },
 
     timeAgo: (dateStr) => {
@@ -453,34 +572,27 @@ const app = {
         const now = new Date();
         const diff = (now - dateV) / 1000;
 
-        if (diff < 0) return 'только что';
-        if(diff < 60) return 'только что';
+        if (diff < 60) return 'только что';
         if(diff < 3600) return Math.floor(diff/60) + ' мин. назад';
         if(diff < 86400) return Math.floor(diff/3600) + ' ч. назад';
         if(diff < 604800) return Math.floor(diff/86400) + ' дн. назад';
-        return dateV.toLocaleDateString(); 
+        if(diff < 31536000) return Math.floor(diff/2592000) + ' мес. назад';
+        return dateV.toLocaleDateString('ru-RU'); 
     },
     
     renderSingleComment: (comment) => {
+        // ЗАВЕРШЕНИЕ РЕНДЕРА КОММЕНТАРИЯ
         return `
             <div class="comment">
                 <img class="comment-avatar" src="${comment.avatar}" alt="${comment.username}">
                 <div>
                     <p><strong>${comment.username}</strong> <span style="font-size: 0.8rem; color: var(--text-muted);">${app.timeAgo(comment.created_at)}</span></p>
-                    <p>${comment.text}</p>
+                    <p class="comment-text">${comment.text.replace(/\n/g, '<br>')}</p>
                 </div>
             </div>
         `;
-    },
+    }
+};
 
-    renderComments: (comments) => {
-        return comments.map(app.renderSingleComment).join('');
-    },
-    
-    // ------------------------------------
-}; 
-
-// --- Инициализация при загрузке страницы (запуск приложения) ---
-document.addEventListener('DOMContentLoaded', () => {
-    app.init(); 
-});
+// Запускаем приложение
+document.addEventListener('DOMContentLoaded', () => app.init());

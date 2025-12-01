@@ -1,72 +1,72 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FluxTube</title>
-    
-    <link rel="stylesheet" href="/css/style.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FluxTube</title>
+    
+    <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
-    
-    <nav class="navbar">
-        <div class="logo" onclick="app.loadFeed()">
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="var(--primary)">
-                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/>
-                <path d="M0 0h24v24H0z" fill="none"/>
-            </svg>
-            <span>FluxTube</span>
-        </div>
-        <div class="search-bar">
-            <input type="text" placeholder="Поиск видео...">
-        </div>
-        <div class="user-menu" id="userMenu">
-            <button onclick="app.showModal('login')">Войти</button>
-        </div>
-    </nav>
+    
+    <header class="navbar">         <div class="logo" onclick="app.loadFeed()">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="var(--primary)">
+                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/>
+                <path d="M0 0h24v24H0z" fill="none"/>
+            </svg>
+            <span>FluxTube</span>
+        </div>
+        <div class="search-bar">
+            <input type="text" placeholder="Поиск видео..." onkeyup="if(event.key === 'Enter') app.search(this.value)">
+        </div>
+        <div class="user-menu" id="userMenu">
+                        <button id="uploadBtn" class="hidden" onclick="app.showModal('upload')">Загрузить</button> 
+            <button id="loginBtn" onclick="app.showModal('login')">Войти</button>
+        </div>
+    </header>
 
-    <main id="appContent">
-        <h1 style="text-align:center; padding:50px;">Загрузка FluxTube...</h1>
-    </main>
+    <main id="appContent">
+        <h1 style="text-align:center; padding:50px;">Загрузка FluxTube...</h1>
+    </main>
 
-    <div id="modalOverlay" class="modal-overlay hidden">
-        
-        <div class="modal" id="authModal">
-            <h2 id="modalTitle">Вход</h2>
-            <form id="authForm" onsubmit="return false;">
-                <input type="text" name="username" placeholder="Имя пользователя" required>
-                <input type="password" name="password" placeholder="Пароль" required>
-                
-                <div id="regFields" class="hidden">
-                    <label style="display:block; color:var(--text-muted); font-size:0.9rem; margin-top:5px;">Аватар:</label>
-                    <input type="file" name="avatar" accept="image/*">
-                </div>
-                
-                <button type="submit">Продолжить</button>
-            </form>
-            <p id="toggleAuth" onclick="app.toggleAuthMode()">Нет аккаунта? Создать</p>
-            <button class="close-btn" onclick="app.closeModal()">X</button>
-        </div>
+    <div id="modalOverlay" class="modal-overlay hidden" onclick="if(event.target.id === 'modalOverlay') app.closeModal()">
+        
+        <div class="modal" id="authModal">
+            <span class="modal-close" onclick="app.closeModal()">X</span>             <h2 id="modalTitle">Вход</h2>
+                        <form id="authForm" onsubmit="app.handleAuth(event); return false;">
+                <input type="text" name="username" placeholder="Имя пользователя" required>
+                <input type="password" name="password" placeholder="Пароль" required>
+                
+                <div id="regFields" class="hidden">
+                    <label style="display:block; color:var(--text-muted); font-size:0.9rem; margin-top:5px;">Аватар (обязательно для регистрации):</label>
+                    <input type="file" name="avatar" accept="image/*">
+                </div>
+                
+                <button type="submit">Продолжить</button>
+            </form>
+                        <footer class="modal-footer">
+                <a id="toggleAuth" onclick="app.toggleAuthMode()">Нет аккаунта? Создать</a>
+            </footer>
+        </div>
 
-        <div class="modal hidden" id="uploadModal">
-            <h2>Загрузить видео</h2>
-            <form id="uploadForm" onsubmit="return false;">
-                <input type="text" name="title" placeholder="Название" required>
-                <textarea name="description" placeholder="Описание (по желанию)"></textarea>
-                
-                <label style="display:block; color:var(--text-muted); font-size:0.9rem;">Видео файл:</label>
-                <input type="file" name="video" accept="video/*" required>
-                
-                <label style="display:block; color:var(--text-muted); font-size:0.9rem;">Обложка:</label>
-                <input type="file" name="thumbnail" accept="image/*" required>
-                
-                <button type="submit">Опубликовать</button>
-            </form>
-            <button class="close-btn" onclick="app.closeModal()">X</button>
-        </div>
-    </div>
+        <div class="modal hidden" id="uploadModal">
+            <span class="modal-close" onclick="app.closeModal()">X</span>             <h2>Загрузить видео</h2>
+                        <form id="uploadForm" onsubmit="app.handleUpload(event); return false;">
+                <input type="text" name="title" placeholder="Название" required>
+                <textarea name="description" placeholder="Описание (по желанию)"></textarea>
+                
+                <label style="display:block; color:var(--text-muted); font-size:0.9rem;">Видео файл:</label>
+                <input type="file" name="video" accept="video/*" required>
+                
+                <label style="display:block; color:var(--text-muted); font-size:0.9rem;">Обложка:</label>
+                <input type="file" name="thumbnail" accept="image/*" required>
+                
+                <button type="submit">Опубликовать</button>
+            </form>
+        </div>
+    </div>
 
-    <script src="/socket.io/socket.io.js"></script>
-    <script src="/js/script.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/js/script.js"></script>
 </body>
 </html>
