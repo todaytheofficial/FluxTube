@@ -6,17 +6,13 @@ const app = {
         app.checkUser();
         app.setupSocket();
         
-        // Обработка кнопок "Назад/Вперед" в браузере
         window.onpopstate = app.router;
         
-        // Инициализация форм
         document.getElementById('authForm').onsubmit = app.handleAuth;
         document.getElementById('uploadForm').onsubmit = app.handleUpload;
         
-        // Загрузка начальной страницы
         app.router();
         
-        // Закрытие меню при клике вне его
         document.addEventListener('click', (e) => {
             if (!e.target.closest('#userMenu')) app.closeUserMenu();
         });
@@ -96,7 +92,7 @@ const app = {
         </div>`;
     },
 
-    // 2. Видео плеер
+    // 2. Видео плеер (Добавлена кнопка Удалить для автора)
     loadVideo: async (id) => {
         history.pushState(null, '', `/watch/${id}`);
         const main = document.getElementById('appContent');
@@ -106,6 +102,9 @@ const app = {
         if(!res.ok) return main.innerHTML = '<h2>Видео не найдено</h2>';
         
         const { video, comments } = await res.json();
+        
+        // Проверка, является ли текущий пользователь автором видео
+        const isAuthor = app.user && app.user.id == video.author_id;
 
         main.innerHTML = `
             <div class="player-container">
@@ -117,9 +116,17 @@ const app = {
                         <h1>${video.title}</h1>
                         <div class="video-actions">
                             <span>${video.views} просмотров • ${new Date(video.created_at).toLocaleDateString()}</span>
-                            <div style="display:flex; gap:10px">
+                            <div style="display:flex; gap:10px; align-items:center;">
                                 <button class="btn-action" onclick="app.vote(${video.id}, 'like')">👍 ${video.likes}</button>
                                 <button class="btn-action" onclick="app.vote(${video.id}, 'dislike')">👎 ${video.dislikes}</button>
+                                
+                                ${isAuthor ? `
+                                    <button class="btn-primary" 
+                                        style="background-color:var(--error); margin-left: 20px;"
+                                        onclick="app.deleteVideo(${video.id})">
+                                        Удалить видео
+                                    </button>
+                                ` : ''}
                             </div>
                         </div>
                         <div class="channel-row">
@@ -213,10 +220,8 @@ const app = {
         
         let opts = {};
         if (isReg) {
-            // Регистрация (FormData для файла)
             opts = { method: 'POST', body: formData };
         } else {
-            // Вход (JSON)
             const data = Object.fromEntries(formData.entries());
             opts = { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) };
         }
@@ -248,7 +253,6 @@ const app = {
             body: JSON.stringify({ channelId: id })
         });
         if((await res.json()).success) {
-            // Перезагружаем текущую страницу канала или видео
             const path = location.pathname;
             if (path.startsWith('/channel/')) app.loadChannel(id);
             else if (path.startsWith('/watch/')) app.loadVideo(path.split('/').pop());
@@ -264,6 +268,22 @@ const app = {
         const txt = document.getElementById('commentInp').value;
         if(txt) app.socket.emit('comment', { videoId: vid, userId: app.user.id, text: txt });
         document.getElementById('commentInp').value = '';
+    },
+    
+    // НОВАЯ ФУНКЦИЯ: Удаление видео
+    deleteVideo: async (id) => {
+        if (!app.user) return app.showModal('login');
+        if (!confirm('Вы уверены, что хотите удалить это видео?')) return;
+        
+        const res = await fetch(`/api/video/${id}`, { method: 'DELETE' });
+        const json = await res.json();
+        
+        if (json.success) {
+            alert('Видео успешно удалено.');
+            app.loadFeed(); // Возвращаемся на главную
+        } else {
+            alert(`Ошибка удаления: ${json.message}`);
+        }
     },
 
     // --- Утилиты UI ---
