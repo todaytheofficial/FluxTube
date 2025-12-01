@@ -4,6 +4,7 @@ const app = {
 
     init: () => {
         // Инициализация Socket.IO
+        // Убедитесь, что <script src="/socket.io/socket.io.js"></script> есть в index.html
         app.socket = io();
         
         // Настройка обработчиков событий Socket.IO
@@ -19,7 +20,7 @@ const app = {
         // Обработка истории браузера для навигации
         window.onpopstate = app.router;
 
-        // Настройка обработчиков форм (теперь формы гарантированно присутствуют в DOM)
+        // Настройка обработчиков форм (формы #loginForm и #registerForm должны присутствовать в index.html)
         const loginForm = document.getElementById('loginForm');
         if (loginForm) loginForm.onsubmit = app.login;
 
@@ -31,6 +32,7 @@ const app = {
 
     loadMe: async () => {
         const res = await fetch('/api/me');
+        // Получаем все элементы навигации
         const loginSection = document.getElementById('loginSection');
         const uploadBtn = document.getElementById('uploadBtn');
         const userMenu = document.getElementById('userMenu');
@@ -39,7 +41,7 @@ const app = {
         if (res.ok) {
             app.user = await res.json();
             
-            // Проверка на null добавлена для безопасности, но после исправления HTML, они должны существовать
+            // Пользователь авторизован: скрываем вход/регистрацию, показываем меню и кнопки
             if (loginSection) loginSection.style.display = 'none';
             if (userMenu) userMenu.style.display = 'flex';
             if (uploadBtn) uploadBtn.style.display = 'inline-block';
@@ -47,7 +49,7 @@ const app = {
             document.getElementById('usernameDisplay').textContent = app.user.username;
             document.getElementById('userAvatar').src = app.user.avatar;
             
-            // Проверка прав Today_Idk_New и Admin_18Plus для кнопки Admin Panel
+            // Проверка прав администраторов
             if (adminPanelBtn) {
                 if (app.user.username === 'Today_Idk_New' || app.user.username === 'Admin_18Plus') {
                     adminPanelBtn.style.display = 'inline-block';
@@ -56,6 +58,7 @@ const app = {
                 }
             }
         } else {
+            // Пользователь не авторизован: показываем вход/регистрацию
             app.user = null;
             if (loginSection) loginSection.style.display = 'flex';
             if (userMenu) userMenu.style.display = 'none';
@@ -201,11 +204,12 @@ const app = {
         if (!app.user) return app.router('/login');
         history.pushState(null, '', '/upload');
         
+        // Копируем контент из скрытого шаблона #uploadPage
         const uploadPageContent = document.getElementById('uploadPage');
         if (uploadPageContent) {
             document.getElementById('appContent').innerHTML = uploadPageContent.innerHTML;
             
-            // Важно: перепривязка обработчика после вставки HTML
+            // Привязываем обработчик к форме, которая только что была вставлена
             const form = document.getElementById('uploadFormContent');
             if (form) {
                 form.onsubmit = app.uploadVideo; 
@@ -214,7 +218,7 @@ const app = {
             }
             
         } else {
-            document.getElementById('appContent').innerHTML = '<h2>Ошибка: Не найден шаблон страницы загрузки.</h2>';
+            document.getElementById('appContent').innerHTML = '<h2>Ошибка: Не найден шаблон страницы загрузки (#uploadPage).</h2>';
         }
     },
 
@@ -259,10 +263,12 @@ const app = {
         const isMyChannel = app.user && app.user.id == authorId;
         const isAdmin18Plus = app.user && app.user.username === 'Admin_18Plus';
 
+        // NOTE: Предполагается, что баннер канала (background image) должен быть реализован через стили или data-атрибуты,
+        // но здесь мы используем простую структуру для центрирования информации.
         main.innerHTML = `
             <div class="channel-page">
-                <div style="display:flex; flex-direction:column; align-items:center; margin-bottom:40px; text-align:center">
-                    <img style="width:100px; height:100px; border-radius:50%; object-fit:cover; margin-bottom:10px" src="${data.user.avatar}">
+                <div class="channel-info-container">
+                    <img class="avatar" src="${data.user.avatar}">
                     <h1>${data.user.username}</h1>
                     <p id="subsCountDisplay" style="color:var(--text-muted)">${data.subs} подписчиков</p>
                     ${app.user && app.user.id != authorId ? 
@@ -495,6 +501,13 @@ const app = {
             body: JSON.stringify(body)
         });
         
+        // Обработка ошибок сети и статусов, отличных от 2xx
+        if (!res.ok) {
+            statusEl.textContent = `❌ Ошибка: Сервер вернул статус ${res.status}. Проверьте маршрут в server.js.`;
+            statusEl.style.color = 'red';
+            return;
+        }
+
         const data = await res.json();
         
         if (data.success) {
@@ -557,14 +570,14 @@ const app = {
                         </div>
                     </div>
                 `;
+                // Добавляем новый комментарий в начало списка
                 list.insertAdjacentHTML('afterbegin', newCommentHtml);
             }
         }
     },
 
     handleNewVideo: (data) => {
-        // Уведомление о новом видео
-        console.log(`Новое видео опубликовано: ${data.title}`);
+
     },
     
     handleUpdateView: (data) => {
@@ -576,7 +589,7 @@ const app = {
     },
 
     handleUpdate18PlusStatus: (data) => {
-        console.log(`Видео ${data.videoId} изменило статус 18+: ${data.is_18_plus}`);
+        
     }
 };
 
