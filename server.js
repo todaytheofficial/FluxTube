@@ -1,7 +1,7 @@
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
-const { Pool } = require('pg'); // PostgreSQL
+const mongoose = require('mongoose'); // Использование Mongoose для MongoDB
 const multer = require('multer');
 const bcrypt = require('bcrypt');
 const cookieParser = require('cookie-parser');
@@ -14,6 +14,7 @@ const io = socketIo(server);
 
 // --- КОНФИГУРАЦИЯ ---
 const PORT = process.env.PORT || 3000;
+const MONGO_URI = process.env.MONGO_URI; // ОБЯЗАТЕЛЬНО: Строка подключения к MongoDB Atlas
 const UPLOADS_PATH = path.join(__dirname, 'uploads');
 const COOKIE_MAX_AGE = 1000 * 60 * 60 * 24 * 7; // 7 дней
 
@@ -22,109 +23,76 @@ const COOKIE_MAX_AGE = 1000 * 60 * 60 * 24 * 7; // 7 дней
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 });
 
-// --- ПОДКЛЮЧЕНИЕ К БАЗЕ ДАННЫХ POSTGRESQL ---
-const DB_URL = process.env.DATABASE_URL;
-
-if (!DB_URL) {
-    console.error("ОШИБКА: Переменная окружения DATABASE_URL не установлена.");
-    // В продакшене лучше выйти, если база данных недоступна
-}
-
-const pool = new Pool({
-    connectionString: DB_URL,
-    // Если вы используете Render, вам может понадобиться SSL
-    // ssl: { rejectUnauthorized: false } 
-});
-
-// --- АСИНХРОННЫЕ ОБЕРТКИ ДЛЯ ЗАПРОСОВ ---
-// Это позволяет использовать привычные db.run, db.get, db.all, но с await
-const db = {
-    run: async (sql, params) => {
-        const result = await pool.query(sql, params);
-        return { 
-            lastID: result.rows[0] ? result.rows[0].id : null, 
-            changes: result.rowCount 
-        };
-    },
-    get: async (sql, params) => {
-        const result = await pool.query(sql, params);
-        return result.rows[0];
-    },
-    all: async (sql, params) => {
-        const result = await pool.query(sql, params);
-        return result.rows;
-    },
-};
-
-// --- ИНИЦИАЛИЗАЦИЯ/МИГРАЦИЯ БАЗЫ ДАННЫХ POSTGRESQL ---
-const initializeDatabase = async () => {
+// --- ПОДКЛЮЧЕНИЕ К MONGODB ---
+const connectDB = async () => {
+    if (!MONGO_URI) {
+        console.error("ОШИБКА: Переменная окружения MONGO_URI не установлена. База данных не подключена.");
+        // В продакшене лучше process.exit(1);
+        return;
+    }
     try {
-        console.log("Инициализация/проверка таблиц PostgreSQL...");
-
-        // 1. users
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS users (
-                id SERIAL PRIMARY KEY,
-                username TEXT UNIQUE NOT NULL,
-                password TEXT NOT NULL,
-                avatar TEXT DEFAULT '/img/default_avatar.svg',
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            );
-        `);
-        // 2. videos
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS videos (
-                id SERIAL PRIMARY KEY,
-                author_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-                title TEXT,
-                description TEXT,
-                filename TEXT,
-                thumbnail TEXT,
-                views INTEGER DEFAULT 0,
-                is_18_plus INTEGER DEFAULT 0,
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            );
-        `);
-        // 3. votes
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS votes (
-                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-                video_id INTEGER REFERENCES videos(id) ON DELETE CASCADE,
-                type TEXT,
-                PRIMARY KEY (user_id, video_id)
-            );
-        `);
-        // 4. subscriptions
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS subscriptions (
-                subscriber_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-                channel_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-                PRIMARY KEY (subscriber_id, channel_id)
-            );
-        `);
-        // 5. comments
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS comments (
-                id SERIAL PRIMARY KEY,
-                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-                video_id INTEGER REFERENCES videos(id) ON DELETE CASCADE,
-                text TEXT,
-                parent_id INTEGER REFERENCES comments(id) ON DELETE CASCADE,
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            );
-        `);
-        
-        console.log("✅ База данных PostgreSQL готова.");
-
+        await mongoose.connect(MONGO_URI);
+        console.log("✅ MongoDB подключен успешно.");
     } catch (err) {
-        console.error("ОШИБКА ИНИЦИАЛИЗАЦИИ БАЗЫ ДАННЫХ:", err.message);
+        console.error("ОШИБКА ПОДКЛЮЧЕНИЯ К MONGODB:", err.message);
     }
 };
 
-initializeDatabase();
+connectDB();
+
+// --- СХЕМЫ И МОДЕЛИ MONGOOSE ---
+
+const userSchema = new mongoose.Schema({
+    username: { type: String, required: true, unique: true },
+    password: { type: String, required: true },
+    avatar: { type: String, default: '/img/default_avatar.svg' },
+    createdAt: { type: Date, default: Date.now }
+});
+
+const videoSchema = new mongoose.Schema({
+    authorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    title: String,
+    description: String,
+    filename: String, // Локальный путь к видеофайлу (для S3/Cloudinary нужно изменить)
+    thumbnail: String, // Локальный путь к обложке
+    views: { type: Number, default: 0 },
+    is18Plus: { type: Number, default: 0 }, // 0 или 1
+    createdAt: { type: Date, default: Date.now }
+});
+
+const voteSchema = new mongoose.Schema({
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    videoId: { type: mongoose.Schema.Types.ObjectId, ref: 'Video', required: true },
+    type: { type: String, enum: ['like', 'dislike'], required: true }
+}, { unique: true }); // Mongoose не поддерживает compound unique key в схеме, используем .index()
+
+voteSchema.index({ userId: 1, videoId: 1 }, { unique: true });
+
+const subscriptionSchema = new mongoose.Schema({
+    subscriberId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    channelId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true }
+});
+
+subscriptionSchema.index({ subscriberId: 1, channelId: 1 }, { unique: true });
+
+const commentSchema = new mongoose.Schema({
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    videoId: { type: mongoose.Schema.Types.ObjectId, ref: 'Video', required: true },
+    text: String,
+    parentId: { type: mongoose.Schema.Types.ObjectId, ref: 'Comment', default: null },
+    createdAt: { type: Date, default: Date.now }
+});
+
+const User = mongoose.model('User', userSchema);
+const Video = mongoose.model('Video', videoSchema);
+const Vote = mongoose.model('Vote', voteSchema);
+const Subscription = mongoose.model('Subscription', subscriptionSchema);
+const Comment = mongoose.model('Comment', commentSchema);
 
 // --- ФУНКЦИИ УПРАВЛЕНИЯ (Установка аккаунтов) ---
 const setupInitialAccount = async () => {
+    if (mongoose.connection.readyState !== 1) return; // Не запускаем, если нет подключения
+
     const adminUsername = 'Admin_18Plus';
     const newUsername = 'Today_Idk_New';
     
@@ -138,11 +106,9 @@ const setupInitialAccount = async () => {
 
     for (const acc of accountsToCreate) {
         try {
-            const existing = await db.get(`SELECT id FROM users WHERE username = $1`, [acc.username]);
+            const existing = await User.findOne({ username: acc.username });
             if (!existing) {
-                await pool.query(`
-                    INSERT INTO users (username, password, avatar) VALUES ($1, $2, $3)
-                `, [acc.username, acc.password, acc.avatar]);
+                await User.create(acc);
                 console.log(`Создан аккаунт: ${acc.username}`);
             }
         } catch (e) {
@@ -151,7 +117,7 @@ const setupInitialAccount = async () => {
     }
 };
 
-setupInitialAccount();
+mongoose.connection.on('connected', setupInitialAccount); // Запуск после подключения к БД
 
 // --- MIDDLEWARE ---
 app.use(express.json({ limit: '50mb' }));
@@ -180,10 +146,10 @@ const checkAuth = async (req, res, next) => {
     if (!req.cookies.user_id) return res.status(401).json({ error: 'Нужна авторизация' });
     
     try {
-        const user = await db.get(`SELECT id, username, avatar FROM users WHERE id = $1`, [req.cookies.user_id]);
+        const user = await User.findById(req.cookies.user_id).select('id username avatar');
         if (!user) return res.status(401).json({ error: 'Недействительная сессия' });
-        req.user = user;
-        req.userId = user.id;
+        req.user = user.toObject();
+        req.userId = user._id;
         next();
     } catch (err) {
         res.status(500).json({ error: 'Ошибка сервера при авторизации' });
@@ -208,17 +174,14 @@ app.post('/api/register', upload.single('avatar'), async (req, res) => {
         const avatar = req.file ? `/uploads/${req.file.filename}` : '/img/default_avatar.svg';
         const hash = await bcrypt.hash(password, 10);
 
-        const result = await pool.query(`
-            INSERT INTO users (username, password, avatar) VALUES ($1, $2, $3) RETURNING id
-        `, [username, hash, avatar]);
+        const newUser = await User.create({ username, password: hash, avatar });
         
-        const userId = result.rows[0].id;
-        res.cookie('user_id', userId, { httpOnly: true, maxAge: COOKIE_MAX_AGE });
-        res.json({ success: true, user_id: userId });
+        res.cookie('user_id', newUser._id.toString(), { httpOnly: true, maxAge: COOKIE_MAX_AGE });
+        res.json({ success: true, user_id: newUser._id.toString() });
         
     } catch (e) {
         if(req.file) fs.unlink(req.file.path, ()=>{});
-        const message = e.message.includes('unique constraint') ? "Имя пользователя занято" : e.message;
+        const message = e.code === 11000 ? "Имя пользователя занято" : e.message;
         res.json({ success: false, message: message });
     }
 });
@@ -230,15 +193,15 @@ app.post('/api/login', async (req, res) => {
     if (!username || !password) return res.json({ success: false, message: "Заполните поля" });
 
     try {
-        const user = await db.get(`SELECT id, password FROM users WHERE username = $1`, [username]);
+        const user = await User.findOne({ username });
         if (!user) return res.json({ success: false, message: "Неверное имя пользователя или пароль" });
         
         const match = await bcrypt.compare(password, user.password);
         
         if (!match) return res.json({ success: false, message: "Неверное имя пользователя или пароль" });
 
-        res.cookie('user_id', user.id, { httpOnly: true, maxAge: COOKIE_MAX_AGE });
-        res.json({ success: true, user_id: user.id });
+        res.cookie('user_id', user._id.toString(), { httpOnly: true, maxAge: COOKIE_MAX_AGE });
+        res.json({ success: true, user_id: user._id.toString() });
     } catch (e) {
         res.status(500).json({ success: false, message: "Ошибка сервера" });
     }
@@ -265,13 +228,16 @@ app.post('/api/upload', checkAuth, upload.fields([{ name: 'video' }, { name: 'th
     const thumbPath = `/uploads/${req.files.thumbnail[0].filename}`;
 
     try {
-        const result = await pool.query(`
-            INSERT INTO videos (author_id, title, description, filename, thumbnail, is_18_plus) 
-            VALUES ($1, $2, $3, $4, $5, $6) RETURNING id
-        `, [req.userId, title, description, vidPath, thumbPath, isAdult]);
+        const newVideo = await Video.create({
+            authorId: req.userId,
+            title,
+            description,
+            filename: vidPath,
+            thumbnail: thumbPath,
+            is18Plus: isAdult
+        });
         
-        const videoId = result.rows[0].id;
-        io.emit('new_video', { id: videoId, title, thumbnail: thumbPath });
+        io.emit('new_video', { id: newVideo._id.toString(), title, thumbnail: thumbPath });
         res.json({ success: true });
     } catch (e) {
         res.status(500).json({success: false, message: "Ошибка записи в базу данных"});
@@ -281,12 +247,22 @@ app.post('/api/upload', checkAuth, upload.fields([{ name: 'video' }, { name: 'th
 // 6. Получение ленты видео
 app.get('/api/videos', async (req, res) => {
     try {
-        const rows = await db.all(`
-            SELECT v.*, u.username, u.avatar as author_avatar 
-            FROM videos v JOIN users u ON v.author_id = u.id 
-            ORDER BY v.created_at DESC
-        `, []);
-        res.json(rows);
+        // Используем populate для подтягивания данных автора
+        const videos = await Video.find({})
+            .sort({ createdAt: -1 })
+            .populate('authorId', 'username avatar'); // Включаем username и avatar автора
+            
+        // Форматируем результат для соответствия старому API
+        const formattedVideos = videos.map(v => ({
+            ...v.toObject(),
+            id: v._id.toString(),
+            author_id: v.authorId._id.toString(),
+            username: v.authorId.username,
+            author_avatar: v.authorId.avatar,
+            is_18_plus: v.is18Plus // Соответствие старому имени ключа
+        }));
+
+        res.json(formattedVideos);
     } catch (e) {
         res.status(500).json({ error: "Ошибка сервера" });
     }
@@ -295,71 +271,103 @@ app.get('/api/videos', async (req, res) => {
 // 7. Получение одного видео (С комментариями, включая реплаи)
 app.get('/api/video/:id', async (req, res) => {
     const videoId = req.params.id;
-    const userId = req.cookies.user_id || 0;
+    const userId = req.cookies.user_id || null;
     const viewCookie = `viewed_${videoId}`;
     
-    // Защита от накрутки просмотров
-    if (!req.cookies[viewCookie]) {
-        try {
-            // Используем RETURNING views для получения обновленного количества
-            const updateResult = await db.get(`
-                UPDATE videos SET views = views + 1 
-                WHERE id = $1 RETURNING views
-            `, [videoId]);
-            
-            res.cookie(viewCookie, '1', { maxAge: 3600000, httpOnly: true }); 
-            
-            // Если обновление прошло успешно, получаем обновленные просмотры
-            if (updateResult) {
-                io.emit('update_view', { id: videoId, views: updateResult.views });
-            }
-        } catch (e) {
-            console.error("Ошибка обновления просмотров:", e.message);
-        }
-    }
-
-    const videoQuery = `
-        SELECT v.*, u.username, u.avatar as author_avatar, u.id as author_id,
-        (SELECT COUNT(*) FROM votes WHERE video_id = v.id AND type = 'like') as likes,
-        (SELECT COUNT(*) FROM votes WHERE video_id = v.id AND type = 'dislike') as dislikes,
-        (SELECT COUNT(*) FROM subscriptions WHERE channel_id = u.id) as subs,
-        (SELECT COUNT(*) FROM subscriptions WHERE subscriber_id = $1 AND channel_id = u.id) as is_sub
-        FROM videos v JOIN users u ON v.author_id = u.id WHERE v.id = $2`;
-
     try {
-        const video = await db.get(videoQuery, [userId, videoId]);
+        // 1. Обновление просмотров
+        if (!req.cookies[viewCookie]) {
+            const updatedVideo = await Video.findByIdAndUpdate(
+                videoId,
+                { $inc: { views: 1 } },
+                { new: true, select: 'views' }
+            );
+            res.cookie(viewCookie, '1', { maxAge: 3600000, httpOnly: true }); 
+            if (updatedVideo) {
+                io.emit('update_view', { id: videoId, views: updatedVideo.views });
+            }
+        }
+        
+        // 2. Получение данных видео с агрегацией (лайки, подписки)
+        const videoAggregation = await Video.aggregate([
+            { $match: { _id: new mongoose.Types.ObjectId(videoId) } },
+            { $lookup: { from: 'users', localField: 'authorId', foreignField: '_id', as: 'author' } },
+            { $unwind: '$author' },
+            { $lookup: { from: 'votes', localField: '_id', foreignField: 'videoId', as: 'votes' } },
+            { $lookup: { from: 'subscriptions', localField: 'authorId', foreignField: 'channelId', as: 'subscriptions' } },
+            { $addFields: {
+                likes: { $size: { $filter: { input: '$votes', as: 'vote', cond: { $eq: ['$$vote.type', 'like'] } } } },
+                dislikes: { $size: { $filter: { input: '$votes', as: 'vote', cond: { $eq: ['$$vote.type', 'dislike'] } } } },
+                subs: { $size: '$subscriptions' },
+                is_sub: { 
+                    $size: { 
+                        $filter: { 
+                            input: '$subscriptions', 
+                            as: 'sub', 
+                            cond: { $eq: ['$$sub.subscriberId', new mongoose.Types.ObjectId(userId)] } 
+                        } 
+                    } 
+                }
+            }},
+            { $project: {
+                _id: 0, 
+                id: '$_id', 
+                author_id: '$authorId',
+                title: 1, 
+                description: 1, 
+                filename: 1, 
+                thumbnail: 1, 
+                views: 1, 
+                is_18_plus: '$is18Plus', // Переименование
+                created_at: '$createdAt', 
+                username: '$author.username', 
+                author_avatar: '$author.avatar', 
+                likes: 1, 
+                dislikes: 1, 
+                subs: 1, 
+                is_sub: { $gt: ['$is_sub', 0] }
+            }}
+        ]);
+
+        const video = videoAggregation[0];
         if (!video) return res.status(404).json({error: "Not found"});
-        
-        // Получаем все комментарии для видео (включая реплаи)
-        const rawComments = await db.all(`
-            SELECT c.*, u.username, u.avatar 
-            FROM comments c JOIN users u ON c.user_id = u.id 
-            WHERE video_id = $1 
-            ORDER BY c.created_at ASC
-        `, [videoId]);
-        
-        // Группировка комментариев по parent_id
+
+        // 3. Получение комментариев
+        const rawComments = await Comment.find({ videoId })
+            .sort({ createdAt: 1 })
+            .populate('userId', 'username avatar')
+            .lean(); // .lean() для более быстрой работы с объектами
+
+        // 4. Группировка комментариев (аналогично SQL-версии)
         const commentsMap = {};
         const rootComments = [];
         
         rawComments.forEach(c => {
             c.replies = [];
+            c.id = c._id.toString(); // Форматирование ID
+            c.username = c.userId.username;
+            c.avatar = c.userId.avatar;
+            delete c._id;
+            delete c.userId;
+
             commentsMap[c.id] = c;
             
-            if (c.parent_id) {
-                if (commentsMap[c.parent_id]) {
-                    commentsMap[c.parent_id].replies.push(c);
+            if (c.parentId) {
+                const parentIdStr = c.parentId.toString();
+                if (commentsMap[parentIdStr]) {
+                    commentsMap[parentIdStr].replies.push(c);
                 }
             } else {
                 rootComments.push(c);
             }
         });
 
-        rootComments.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+        rootComments.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
         res.json({ video, comments: rootComments });
         
     } catch (e) {
+        console.error("Video fetch error:", e);
         res.status(500).json({ error: "Ошибка сервера" });
     }
 });
@@ -367,31 +375,33 @@ app.get('/api/video/:id', async (req, res) => {
 // 8. Данные канала (Профиль пользователя)
 app.get('/api/user/:id', async (req, res) => {
     const channelId = req.params.id;
-    const userId = req.cookies.user_id || 0;
+    const userId = req.cookies.user_id || null;
     
     try {
-        const user = await db.get(`SELECT id, username, avatar FROM users WHERE id = $1`, [channelId]);
+        const user = await User.findById(channelId).select('id username avatar');
         if (!user) return res.status(404).json({ user: null });
         
-        const videos = await db.all(`
-            SELECT id, title, thumbnail, views, is_18_plus 
-            FROM videos 
-            WHERE author_id = $1 
-            ORDER BY created_at DESC
-        `, [channelId]);
+        const videos = await Video.find({ authorId: channelId })
+            .select('id title thumbnail views is18Plus')
+            .sort({ createdAt: -1 })
+            .lean(); 
+
+        const subsCount = await Subscription.countDocuments({ channelId });
         
-        const subsCount = await db.get(`SELECT COUNT(*) as subs FROM subscriptions WHERE channel_id = $1`, [channelId]);
-        const isSubscribed = await db.get(`
-            SELECT COUNT(*) as is_sub 
-            FROM subscriptions 
-            WHERE subscriber_id = $1 AND channel_id = $2
-        `, [userId, channelId]);
+        let isSubscribed = false;
+        if (userId) {
+            const sub = await Subscription.findOne({ 
+                subscriberId: userId, 
+                channelId 
+            });
+            isSubscribed = !!sub;
+        }
 
         res.json({ 
-            user, 
-            videos: videos || [],
-            subs: subsCount.subs || 0, 
-            is_sub: isSubscribed.is_sub > 0
+            user: user.toObject(), 
+            videos: videos.map(v => ({...v, id: v._id.toString(), is_18_plus: v.is18Plus})),
+            subs: subsCount, 
+            is_sub: isSubscribed
         });
     } catch (e) {
         res.status(500).json({ error: "Ошибка сервера" });
@@ -401,24 +411,17 @@ app.get('/api/user/:id', async (req, res) => {
 // 9. Подписка/Отписка
 app.post('/api/subscribe', checkAuth, async (req, res) => {
     const { channelId } = req.body;
+    const subscriberId = req.userId;
 
     try {
-        const row = await db.get(`
-            SELECT * FROM subscriptions 
-            WHERE subscriber_id = $1 AND channel_id = $2
-        `, [req.userId, channelId]);
+        const query = { subscriberId, channelId };
+        const row = await Subscription.findOne(query);
         
         if (row) {
-            await db.run(`
-                DELETE FROM subscriptions 
-                WHERE subscriber_id = $1 AND channel_id = $2
-            `, [req.userId, channelId]);
+            await Subscription.deleteOne(query);
             res.json({ success: true, subscribed: false });
         } else {
-            await db.run(`
-                INSERT INTO subscriptions (subscriber_id, channel_id) 
-                VALUES ($1, $2)
-            `, [req.userId, channelId]);
+            await Subscription.create(query);
             res.json({ success: true, subscribed: true });
         }
     } catch (e) {
@@ -432,15 +435,15 @@ app.delete('/api/video/:id', checkAuth, async (req, res) => {
     const userId = req.userId;
 
     try {
-        const video = await db.get(`SELECT filename, thumbnail, author_id FROM videos WHERE id = $1`, [videoId]);
+        const video = await Video.findById(videoId).lean();
         if (!video) return res.status(404).json({ success: false, message: "Видео не найдено" });
         
-        if (video.author_id != userId) {
+        if (video.authorId.toString() !== userId.toString()) {
             return res.status(403).json({ success: false, message: "Вы не автор этого видео" });
         }
 
-        const deleteResult = await db.run(`DELETE FROM videos WHERE id = $1 AND author_id = $2`, [videoId, userId]);
-        if (deleteResult.changes === 0) {
+        const deleteResult = await Video.deleteOne({ _id: videoId, authorId: userId });
+        if (deleteResult.deletedCount === 0) {
              return res.status(500).json({ success: false, message: "Не удалось удалить видео из БД" });
         }
 
@@ -451,6 +454,10 @@ app.delete('/api/video/:id', checkAuth, async (req, res) => {
                 if (e) console.error(`Ошибка при удалении файла ${filePath}:`, e.message);
             });
         });
+
+        // Удаляем связанные данные (голоса, комментарии)
+        await Vote.deleteMany({ videoId });
+        await Comment.deleteMany({ videoId });
 
         res.json({ success: true, message: "Видео удалено" });
     } catch (e) {
@@ -467,12 +474,12 @@ app.post('/api/video/toggle_18plus/:id', checkAuth, checkAdminMiddleware, async 
     }
     
     try {
-        const video = await db.get(`SELECT is_18_plus FROM videos WHERE id = $1`, [videoId]);
+        const video = await Video.findById(videoId).select('is18Plus');
         if (!video) return res.status(404).json({ success: false, message: "Видео не найдено" });
         
-        const newState = video.is_18_plus === 1 ? 0 : 1;
+        const newState = video.is18Plus === 1 ? 0 : 1;
         
-        await db.run(`UPDATE videos SET is_18_plus = $1 WHERE id = $2`, [newState, videoId]);
+        const updated = await Video.findByIdAndUpdate(videoId, { is18Plus: newState }, { new: true });
         
         res.json({ success: true, is_18_plus: newState });
         io.emit('update_18plus_status', { videoId: videoId, is_18_plus: newState });
@@ -484,20 +491,35 @@ app.post('/api/video/toggle_18plus/:id', checkAuth, checkAdminMiddleware, async 
 // 12. Административное удаление пользователя (Block)
 app.post('/api/admin/block', checkAuth, checkAdminMiddleware, async (req, res) => {
     const { userId } = req.body;
-    const targetUserId = parseInt(userId);
+    const targetUserId = userId; // В MongoDB ID - это строка
 
-    if (isNaN(targetUserId) || targetUserId <= 0) {
-        return res.status(400).json({ success: false, message: 'Неверный ID пользователя.' });
-    }
-    
-    if (targetUserId === req.userId) {
-        return res.status(403).json({ success: false, message: 'Нельзя удалить собственный аккаунт через эту панель.' });
+    if (!targetUserId || targetUserId === req.userId.toString()) {
+        return res.status(403).json({ success: false, message: 'Нельзя удалить собственный аккаунт.' });
     }
 
     try {
-        // Каскадное удаление (CASCADE) должно работать в PG, 
-        // но также удаляем явным образом для надежности
-        await db.run('DELETE FROM users WHERE id = $1', [targetUserId]);
+        // Находим все видео пользователя для удаления файлов
+        const userVideos = await Video.find({ authorId: targetUserId }).lean();
+        
+        // Удаляем файлы
+        userVideos.forEach(video => {
+            const filesToDelete = [video.filename, video.thumbnail];
+            filesToDelete.forEach(filePath => {
+                const fullPath = path.join(__dirname, filePath.replace('/uploads/', 'uploads/'));
+                fs.unlink(fullPath, (e) => {
+                    if (e) console.error(`Ошибка при удалении файла ${filePath}:`, e.message);
+                });
+            });
+        });
+        
+        // Удаляем связанные данные
+        await Video.deleteMany({ authorId: targetUserId });
+        await Subscription.deleteMany({ $or: [{ subscriberId: targetUserId }, { channelId: targetUserId }] });
+        await Vote.deleteMany({ $or: [{ userId: targetUserId }, { videoId: { $in: userVideos.map(v => v._id) } }] });
+        await Comment.deleteMany({ $or: [{ userId: targetUserId }, { videoId: { $in: userVideos.map(v => v._id) } }] });
+        
+        // Удаляем пользователя
+        await User.findByIdAndDelete(targetUserId);
 
         return res.json({ 
             success: true, 
@@ -513,37 +535,32 @@ app.post('/api/admin/block', checkAuth, checkAdminMiddleware, async (req, res) =
 app.post('/api/admin/givesubs', checkAuth, checkAdminMiddleware, async (req, res) => {
     const { channelId, count } = req.body;
     
-    const parsedChannelId = parseInt(channelId);
     const parsedCount = parseInt(count);
 
-    if (isNaN(parsedChannelId) || parsedChannelId <= 0 || isNaN(parsedCount) || parsedCount < 1 || parsedCount > 100) {
+    if (!channelId || isNaN(parsedCount) || parsedCount < 1 || parsedCount > 100) {
         return res.status(400).json({ success: false, message: 'Неверные параметры ID канала или количества (1-100).' });
     }
     
     try {
-        const client = await pool.connect();
-        try {
-            await client.query('BEGIN'); // Начало транзакции
-            for (let i = 1; i <= parsedCount; i++) {
-                // Используем отрицательные ID для фиктивных подписчиков
-                const fakeSubscriberId = -1 * (Date.now() + i + parsedChannelId); 
-                
-                await client.query(`
-                    INSERT INTO subscriptions (subscriber_id, channel_id) VALUES ($1, $2)
-                    ON CONFLICT (subscriber_id, channel_id) DO NOTHING
-                `, [fakeSubscriberId, parsedChannelId]);
-            }
-            await client.query('COMMIT'); // Фиксация транзакции
-        } catch (e) {
-            await client.query('ROLLBACK');
-            throw e;
-        } finally {
-            client.release();
+        const bulkOps = [];
+        for (let i = 1; i <= parsedCount; i++) {
+            // Используем отрицательный псевдо-ID для фиктивных подписчиков
+            const fakeSubscriberId = new mongoose.Types.ObjectId(String(Date.now() + i + Math.random()).slice(-12).padStart(24, '0'));
+            
+            bulkOps.push({
+                updateOne: {
+                    filter: { subscriberId: fakeSubscriberId, channelId },
+                    update: { $setOnInsert: { subscriberId: fakeSubscriberId, channelId } },
+                    upsert: true
+                }
+            });
         }
+        
+        await Subscription.bulkWrite(bulkOps);
         
         return res.json({ 
             success: true, 
-            message: `Успешно накручено ${parsedCount} фиктивных подписчиков для канала ID ${parsedChannelId}.` 
+            message: `Успешно накручено ${parsedCount} фиктивных подписчиков для канала ID ${channelId}.` 
         });
         
     } catch (error) {
@@ -558,11 +575,15 @@ io.on('connection', (socket) => {
     // Голосование (лайк/дизлайк)
     socket.on('vote', async (data) => {
         try {
-            // Сначала удаляем старый голос
-            await db.run(`DELETE FROM votes WHERE user_id = $1 AND video_id = $2`, [data.userId, data.videoId]);
-            // Вставляем новый
-            await db.run(`INSERT INTO votes (user_id, video_id, type) VALUES ($1, $2, $3)`, [data.userId, data.videoId, data.type]);
-            io.emit('update_votes', { videoId: data.videoId }); 
+            const { userId, videoId, type } = data;
+            
+            // 1. Удаляем старый голос (если есть)
+            await Vote.deleteOne({ userId, videoId });
+
+            // 2. Вставляем новый голос
+            await Vote.create({ userId, videoId, type });
+            
+            io.emit('update_votes', { videoId }); 
         } catch (e) {
              console.error('Socket vote error:', e.message);
         }
@@ -573,25 +594,25 @@ io.on('connection', (socket) => {
         const parentId = data.parentId || null; 
         
         try {
-            const result = await pool.query(`
-                INSERT INTO comments (user_id, video_id, text, parent_id) 
-                VALUES ($1, $2, $3, $4) RETURNING id, created_at
-            `, [data.userId, data.videoId, data.text, parentId]);
+            const newComment = await Comment.create({
+                userId: data.userId, 
+                videoId: data.videoId, 
+                text: data.text, 
+                parentId
+            });
             
-            const newCommentId = result.rows[0].id;
-            const createdAt = result.rows[0].created_at;
-
-            const user = await db.get(`SELECT username, avatar FROM users WHERE id = $1`, [data.userId]);
+            const user = await User.findById(data.userId).select('username avatar');
             
-            const newComment = { 
+            const commentToSend = { 
                 ...data, 
-                id: newCommentId, 
+                id: newComment._id.toString(), 
                 username: user.username, 
                 avatar: user.avatar, 
-                created_at: createdAt, 
-                parent_id: parentId 
+                created_at: newComment.createdAt, 
+                parent_id: parentId // Может быть null
             };
-            io.emit('new_comment', { videoId: data.videoId, comment: newComment });
+            
+            io.emit('new_comment', { videoId: data.videoId, comment: commentToSend });
         } catch (e) {
             console.error('Socket comment error:', e.message);
         }
