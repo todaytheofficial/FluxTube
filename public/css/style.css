@@ -10,6 +10,7 @@
     --secondary: #ff0055;  /* Неоновая Маджента */
     --border: rgba(255, 255, 255, 0.1);
     --shadow: 0 4px 20px rgba(0,0,0,0.5);
+    --warning: #ffcc00; /* Для 18+ */
 }
 
 body {
@@ -86,30 +87,13 @@ header {
 }
 
 /* Меню пользователя */
-#userMenu {
+.user-controls { /* Объединяем стили для loginSection и userMenu */
     display: flex;
     gap: 15px;
     align-items: center;
 }
 
-.btn-primary {
-    background: var(--primary);
-    color: #000;
-    border: none;
-    padding: 8px 16px;
-    border-radius: 20px;
-    font-weight: 700;
-    cursor: pointer;
-    font-size: 0.9rem;
-    transition: 0.2s;
-}
-
-.btn-primary:hover {
-    box-shadow: 0 0 15px var(--primary);
-    transform: translateY(-1px);
-}
-
-.user-avatar-mini {
+.avatar-small { /* Используется в HTML */
     width: 38px;
     height: 38px;
     border-radius: 50%;
@@ -118,7 +102,26 @@ header {
     cursor: pointer;
 }
 
-/* --- Сетка видео --- */
+/* --- Общие кнопки и элементы формы --- */
+
+button {
+    background: var(--bg-hover);
+    color: var(--text-main);
+    border: none;
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: 0.2s;
+    outline: none;
+}
+
+button:hover {
+    background: var(--bg-hover);
+}
+
+/* --- Сетка видео (FEED) --- */
 #appContent {
     padding: 20px;
     max-width: 1600px;
@@ -138,6 +141,7 @@ header {
     cursor: pointer;
     transition: 0.3s;
     border: 1px solid transparent;
+    position: relative; /* Для позиционирования 18+ */
 }
 
 .video-card:hover {
@@ -156,6 +160,7 @@ header {
     padding: 12px;
     display: flex;
     gap: 12px;
+    align-items: flex-start;
 }
 
 .video-card .avatar {
@@ -181,111 +186,75 @@ header {
     color: var(--text-muted);
 }
 
-/* --- Просмотр видео --- */
-.player-container {
-    display: flex;
-    gap: 30px;
-}
-
-.video-stage {
-    flex: 3;
-}
-
-.video-frame {
-    width: 100%;
-    border-radius: 12px;
-    overflow: hidden;
-    background: #000;
-    box-shadow: 0 0 30px rgba(0, 242, 234, 0.1);
-}
-
-.video-frame video {
-    width: 100%;
-    display: block;
-}
-
-.video-meta {
-    margin-top: 15px;
-}
-
-.video-actions {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-top: 10px;
-    padding-bottom: 15px;
-    border-bottom: 1px solid var(--border);
-}
-
-.btn-action {
-    background: var(--bg-hover);
-    color: var(--text-main);
-    border: none;
-    padding: 8px 15px;
-    border-radius: 20px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    font-weight: 600;
-    transition: 0.2s;
-}
-
-.btn-action:hover { background: #333; }
-.btn-action.active { color: var(--secondary); background: rgba(255, 0, 85, 0.1); }
-
-.channel-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-top: 15px;
-}
-
-/* Всплывающее меню пользователя */
-.user-popup {
+.age-warning {
     position: absolute;
-    top: 60px; /* Ниже хедера */
+    top: 10px;
     right: 10px;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
+    background: var(--secondary);
+    color: var(--text-main);
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    font-weight: 700;
+}
+
+/* --- Страница КАНАЛА (Fixes for the banner issue) --- */
+
+.channel-page {
+    position: relative;
+    padding-top: 250px; /* Отступ для баннера */
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+.channel-banner {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 250px; /* Высота баннера */
+    overflow: hidden;
     border-radius: 8px;
-    box-shadow: var(--shadow);
+}
+
+.channel-banner img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    /* Уменьшаем яркость или накладываем легкую тень, чтобы текст был виден */
+    filter: brightness(0.8); 
+}
+
+/* Контейнер информации о канале (аватар, имя) */
+.channel-info-container {
+    position: relative; /* Чтобы был поверх баннера */
+    z-index: 10;
     display: flex;
     flex-direction: column;
-    width: 150px;
-    padding: 10px 0;
-    z-index: 1050;
-}
-
-.user-popup a {
-    padding: 8px 15px;
-    color: var(--text-main);
-    text-decoration: none;
-    transition: background-color 0.2s;
-}
-
-.user-popup a:hover {
-    background-color: var(--bg-hover);
-    color: var(--primary);
-}
-
-.channel-info {
-    display: flex;
     align-items: center;
-    gap: 15px;
-    cursor: pointer;
+    margin-bottom: 40px;
+    text-align: center;
+    padding-top: 10px; /* Дополнительный отступ сверху, чтобы аватар не прилипал */
 }
 
-.channel-avatar {
-    width: 50px;
-    height: 50px;
+.channel-info-container img.avatar {
+    width: 150px;
+    height: 150px;
     border-radius: 50%;
     object-fit: cover;
+    margin-bottom: 10px;
+    border: 5px solid var(--bg-dark); /* Обводка для выделения на фоне баннера */
+    box-shadow: var(--shadow);
+}
+
+.channel-info-container h1 {
+    margin-top: 0;
+    font-size: 2.2rem;
 }
 
 .subscribe-btn {
-    background: var(--text-main);
-    color: var(--bg-dark);
+    background: var(--secondary);
+    color: var(--text-main);
     border: none;
     padding: 10px 20px;
     border-radius: 20px;
@@ -294,138 +263,175 @@ header {
     transition: 0.2s;
 }
 
+.subscribe-btn:hover {
+    background: #ff407f;
+}
+
 .subscribe-btn.subscribed {
     background: var(--bg-hover);
     color: var(--text-muted);
 }
 
-/* Комментарии */
-.comments-list {
-    margin-top: 20px;
+/* --- Страница Просмотра ВИДЕО --- */
+
+.video-page {
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+.video-page video {
+    width: 100%;
+    aspect-ratio: 16/9;
+    border-radius: 12px;
+    background: #000;
+}
+
+.video-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 0;
+}
+
+.votes-controls button {
+    margin-left: 10px;
+}
+
+.video-channel-info {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 15px 0;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 20px;
+}
+
+.video-channel-info .avatar {
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    object-fit: cover;
+    cursor: pointer;
+}
+
+.channel-details h3 {
+    margin: 0;
+    cursor: pointer;
+    font-size: 1.1rem;
+}
+
+.channel-details p {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
+.description-box {
+    background: var(--bg-card);
+    padding: 15px;
+    border-radius: 8px;
+    margin-bottom: 30px;
+}
+
+/* --- Формы (Auth, Upload) --- */
+.page {
+    padding: 20px;
+}
+.auth-page, .upload-form {
+    max-width: 400px;
+    margin: 40px auto;
+    background: var(--bg-card);
+    padding: 30px;
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    border: 1px solid var(--border);
+}
+
+.auth-form input, .auth-form button, .upload-form input:not([type="checkbox"]), .upload-form textarea, .upload-form button {
+    width: 100%;
+    margin-top: 10px;
+}
+
+.auth-form span, .modal-footer span {
+    color: var(--primary);
+    cursor: pointer;
+    font-size: 0.9rem;
+}
+
+/* --- Комментарии --- */
+#commentForm textarea {
+    width: 100%;
+    background: var(--bg-dark);
+    border: 1px solid var(--border);
+    color: var(--text-main);
+    padding: 10px;
+    border-radius: 8px;
+    resize: vertical;
+    min-height: 80px;
+    box-sizing: border-box;
+    margin-bottom: 10px;
+}
+
+#commentForm {
+    display: flex;
+    flex-direction: column;
 }
 
 .comment {
     display: flex;
     gap: 15px;
     margin-bottom: 20px;
+    padding: 10px 0;
+    border-bottom: 1px dashed var(--border);
 }
 
-.comment-input-area {
-    display: flex;
-    gap: 10px;
-    margin-bottom: 30px;
+.comment:last-child {
+    border-bottom: none;
 }
 
-.comment-input-area input {
-    flex: 1;
-    background: transparent;
-    border: none;
-    border-bottom: 1px solid var(--border);
-    color: var(--text-main);
-    padding: 10px;
+.comment .avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    object-fit: cover;
 }
 
-.comment-input-area input:focus {
-    border-color: var(--text-main);
-    outline: none;
-}
-
-/* --- Модальные окна --- */
-#modalOverlay {
-    position: fixed;
-    top: 0; left: 0; width: 100%; height: 100%;
-    background: rgba(0,0,0,0.8);
-    backdrop-filter: blur(5px);
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    z-index: 2000;
-}
-
-.modal {
-    background: var(--bg-card);
-    padding: 30px;
-    border-radius: 16px;
-    width: 90%;
-    max-width: 400px;
-    border: 1px solid var(--border);
-    position: relative;
-    box-shadow: 0 0 50px rgba(0,0,0,0.5);
-}
-
-.close-btn {
-    position: absolute;
-    top: 15px; right: 15px;
-    background: none; border: none;
+.comment small {
     color: var(--text-muted);
-    font-size: 1.5rem;
-    cursor: pointer;
-}
-
-.modal h2 { margin-top: 0; text-align: center; }
-
-.modal form {
-    display: flex;
-    flex-direction: column;
-    gap: 15px;
-}
-
-.modal input[type="text"], 
-.modal input[type="password"],
-.modal textarea {
-    background: var(--bg-dark);
-    border: 1px solid var(--border);
-    padding: 12px;
-    border-radius: 8px;
-    color: var(--text-main);
-}
-
-.file-upload-label {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-    font-size: 0.9rem;
-    color: var(--text-muted);
-    cursor: pointer;
-}
-
-.file-upload-label input {
     font-size: 0.8rem;
 }
 
-.submit-btn {
-    background: linear-gradient(90deg, var(--primary), var(--secondary));
-    border: none;
-    padding: 12px;
-    border-radius: 8px;
-    color: #fff;
+/* --- Административные элементы --- */
+.admin-toggle-18-btn {
+    background: var(--warning);
+    color: var(--bg-dark);
     font-weight: 700;
-    cursor: pointer;
-    margin-top: 10px;
+    margin-left: 10px;
 }
 
-.modal-footer {
-    text-align: center;
-    margin-top: 20px;
-    font-size: 0.9rem;
-    cursor: pointer;
-    color: var(--primary);
+.delete-btn {
+    background: var(--secondary);
+    color: var(--text-main);
+    font-weight: 700;
 }
 
-.hidden { display: none !important; }
+/* --- Стили, которых нет в новом HTML/JS, но могут быть полезны --- */
+.loading-spinner {
+    /* Добавьте сюда стили для спиннера, если необходимо */
+}
 
 /* --- Мобильная адаптация --- */
 @media (max-width: 768px) {
-    .player-container { flex-direction: column; }
     .video-grid { grid-template-columns: 1fr; }
-    .search-container { display: none; /* Прячем поиск на телефоне для простоты */ }
+    .search-container { display: none; }
     
-    .logo-text { display: none; /* Только иконка на очень маленьких экранах */ }
+    .logo-text { display: none; }
     .logo-container { gap: 0; }
     
     header { padding: 0 10px; }
     
-    #userMenu button {
+    .user-controls button {
         padding: 6px 12px;
         font-size: 0.8rem;
     }
