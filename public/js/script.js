@@ -19,12 +19,8 @@ const app = {
         // Обработка истории браузера для навигации
         window.onpopstate = app.router;
 
-        // Настройка обработчиков форм
-        const loginForm = document.getElementById('loginForm');
-        if (loginForm) loginForm.onsubmit = app.login;
-
-        const registerForm = document.getElementById('registerForm');
-        if (registerForm) registerForm.onsubmit = app.register;
+        // Настройка обработчиков форм (если они статичны в index.html)
+        // Если формы загружаются динамически, обработчики нужно назначать после рендеринга страницы.
     },
     
     // --- ОСНОВНЫЕ ФУНКЦИИ АВТОРИЗАЦИИ И ЗАГРУЗКИ ---
@@ -131,10 +127,10 @@ const app = {
         }
         
         document.querySelectorAll('.page').forEach(page => page.style.display = 'none');
-        document.getElementById('appContent').style.display = 'block';
+        const appContent = document.getElementById('appContent');
+        if (appContent) appContent.style.display = 'block';
 
         const path = window.location.pathname;
-        const appContent = document.getElementById('appContent');
 
         if (path === '/' || path === '/home') {
             app.loadFeed();
@@ -149,11 +145,11 @@ const app = {
         } else if (path === '/login') {
             const loginPage = document.getElementById('loginPage');
             if (loginPage) loginPage.style.display = 'flex';
-            appContent.style.display = 'none';
+            if (appContent) appContent.style.display = 'none';
         } else if (path === '/register') {
             const registerPage = document.getElementById('registerPage');
             if (registerPage) registerPage.style.display = 'flex';
-            appContent.style.display = 'none';
+            if (appContent) appContent.style.display = 'none';
         } else if (path === '/admin') {
             app.loadAdminPanel();
         } else {
@@ -164,19 +160,154 @@ const app = {
 
     // --- СТРАНИЦЫ И КОНТЕНТ ---
 
-    // ... (loadFeed, loadUploadPage, uploadVideo, loadChannel, loadAdminPanel, load404 - без изменений)
-    
-    // 4. Страница Просмотра Видео (обновлена для реплаев)
+    // 1. Загрузка Ленты Видео (Feed)
+    loadFeed: async () => {
+        history.pushState(null, '', '/');
+        const main = document.getElementById('appContent');
+        main.innerHTML = '<div class="loading-spinner"></div>';
+        
+        try {
+            const res = await fetch('/api/videos');
+            const videos = await res.json();
+            
+            main.innerHTML = `
+                <h2>Последние видео</h2>
+                <div class="video-grid">
+                    ${videos.map(v => `
+                        <div class="video-card" onclick="app.router('/video/${v.id}')">
+                            <img src="${v.thumbnail}" alt="${v.title}">
+                            ${v.is_18_plus ? '<span class="adult-tag">🔞 18+</span>' : ''}
+                            <div class="card-info">
+                                <h4>${v.title}</h4>
+                                <p>${v.views} просмотров</p>
+                                <div class="card-author" onclick="event.stopPropagation(); app.router('/channel/${v.author_id}')">
+                                    <img class="avatar" src="${v.author_avatar}">
+                                    <span>${v.username}</span>
+                                </div>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        } catch (e) {
+            main.innerHTML = '<h2>Ошибка загрузки ленты.</h2>';
+            console.error(e);
+        }
+    },
+
+    // 2. Страница Загрузки
+    loadUploadPage: () => {
+        if (!app.user) return app.router('/login');
+        history.pushState(null, '', '/upload');
+        const main = document.getElementById('appContent');
+
+        main.innerHTML = `
+            <h2>Загрузка нового видео</h2>
+            <form id="uploadForm" onsubmit="app.uploadVideo(event)">
+                <input type="text" name="title" placeholder="Название видео" required>
+                <textarea name="description" placeholder="Описание"></textarea>
+                
+                <label for="videoFile">Файл видео (.mp4, .mov):</label>
+                <input type="file" name="video" id="videoFile" accept="video/*" required>
+                
+                <label for="thumbnailFile">Обложка видео (.jpg, .png):</label>
+                <input type="file" name="thumbnail" id="thumbnailFile" accept="image/*" required>
+                
+                <label>
+                    <input type="checkbox" name="is_18_plus"> Видео 18+ (для взрослых)
+                </label>
+                
+                <button type="submit">Загрузить</button>
+            </form>
+            <p id="uploadMessage"></p>
+        `;
+    },
+
+    uploadVideo: async (e) => {
+        e.preventDefault();
+        const form = e.target;
+        const messageElement = document.getElementById('uploadMessage');
+        messageElement.textContent = 'Загрузка... Подождите.';
+
+        const formData = new FormData(form);
+        
+        try {
+            const res = await fetch('/api/upload', {
+                method: 'POST',
+                body: formData
+            });
+            const data = await res.json();
+            
+            if (data.success) {
+                messageElement.textContent = 'Видео успешно загружено!';
+                form.reset();
+                setTimeout(() => app.router('/'), 2000);
+            } else {
+                messageElement.textContent = `Ошибка: ${data.message || 'Не удалось загрузить видео.'}`;
+            }
+        } catch (error) {
+            messageElement.textContent = 'Ошибка сети или сервера.';
+            console.error('Upload error:', error);
+        }
+    },
+
+    // 3. Страница Канала
+    loadChannel: async (userId) => {
+        history.pushState(null, '', `/channel/${userId}`);
+        const main = document.getElementById('appContent');
+        main.innerHTML = '<div class="loading-spinner"></div>';
+
+        const res = await fetch(`/api/user/${userId}`);
+        const data = await res.json();
+
+        if (!data.user) return main.innerHTML = '<h2>Пользователь не найден</h2>';
+
+        const u = data.user;
+        const videos = data.videos || [];
+        const isMyChannel = app.user && app.user.id == u.id;
+        
+        main.innerHTML = `
+            <div class="channel-header">
+                <img class="avatar large-avatar" src="${u.avatar}">
+                <h1>${u.username}</h1>
+                <p>${data.subs} подписчиков</p>
+                
+                ${app.user && !isMyChannel ? 
+                    `<button class="subscribe-btn ${data.is_sub ? 'subscribed' : ''}" 
+                    onclick="app.sub(${u.id})">
+                    ${data.is_sub ? 'Вы подписаны' : 'Подписаться'}
+                    </button>` : ''}
+            </div>
+            
+            <hr>
+            
+            <h2>Видео (${videos.length})</h2>
+            <div class="video-grid">
+                ${videos.map(v => `
+                    <div class="video-card" onclick="app.router('/video/${v.id}')">
+                        <img src="${v.thumbnail}" alt="${v.title}">
+                        ${v.is_18_plus ? '<span class="adult-tag">🔞 18+</span>' : ''}
+                        <div class="card-info">
+                            <h4>${v.title}</h4>
+                            <p>${v.views} просмотров</p>
+                            ${isMyChannel ? `<button class="delete-btn" onclick="event.stopPropagation(); app.deleteVideo(${v.id})">Удалить</button>` : ''}
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    },
+
+    // 4. Страница Просмотра Видео
     loadVideo: async (videoId) => {
         history.pushState(null, '', `/video/${videoId}`);
         const main = document.getElementById('appContent');
         main.innerHTML = '<div class="loading-spinner"></div>';
         
         const res = await fetch(`/api/video/${videoId}`);
-        const data = await res.json();
+        if (!res.ok) return main.innerHTML = '<h2>Видео не найдено (404)</h2>';
         
-        if (data.error) return main.innerHTML = '<h2>Видео не найдено</h2>';
-
+        const data = await res.json();
         const v = data.video;
         const isAdmin18Plus = app.user && app.user.username === 'Admin_18Plus';
         
@@ -205,8 +336,10 @@ const app = {
                 <div class="video-meta">
                     <p id="videoViews">${v.views} просмотров</p>
                     <div class="votes-controls">
-                        <button onclick="app.vote(${v.id}, 'like')" class="vote-btn">👍 <span id="likesCount">${v.likes}</span></button>
-                        <button onclick="app.vote(${v.id}, 'dislike')" class="vote-btn">👎 <span id="dislikesCount">${v.dislikes}</span></button>
+                        ${app.user ? `<button onclick="app.vote(${v.id}, 'like')" class="vote-btn">` : '<button disabled class="vote-btn no-auth">'}
+                        👍 <span id="likesCount">${v.likes}</span></button>
+                        ${app.user ? `<button onclick="app.vote(${v.id}, 'dislike')" class="vote-btn">` : '<button disabled class="vote-btn no-auth">'}
+                        👎 <span id="dislikesCount">${v.dislikes}</span></button>
                     </div>
                 </div>
                 <div class="video-channel-info">
@@ -250,30 +383,148 @@ const app = {
         `;
     },
 
+    // 5. Страница Админ-панели
+    loadAdminPanel: () => {
+        if (!app.user || (app.user.username !== 'Today_Idk_New' && app.user.username !== 'Admin_18Plus')) {
+             return app.router('/404');
+        }
+        history.pushState(null, '', '/admin');
+        const main = document.getElementById('appContent');
+        
+        main.innerHTML = `
+            <h2>Административная панель</h2>
+            <p>Добро пожаловать, ${app.user.username}.</p>
+            <hr>
+            
+            <h3>Блокировка/Удаление пользователя</h3>
+            <form id="adminBlockForm" onsubmit="app.adminAction(event, 'block')">
+                <input type="number" name="userId" placeholder="ID Пользователя для удаления" required>
+                <button type="submit" class="delete-btn">Удалить Пользователя</button>
+                <p class="message" id="adminBlockMessage"></p>
+            </form>
+            
+            <hr>
+
+            <h3>Накрутка подписчиков</h3>
+            <form id="adminSubsForm" onsubmit="app.adminAction(event, 'givesubs')">
+                <input type="number" name="channelId" placeholder="ID Канала" required>
+                <input type="number" name="count" placeholder="Количество (1-100)" required min="1" max="100">
+                <button type="submit">Накрутить</button>
+                <p class="message" id="adminSubsMessage"></p>
+            </form>
+        `;
+    },
+
+    // 6. Страница 404
+    load404: () => {
+        history.pushState(null, '', '/404');
+        const main = document.getElementById('appContent');
+        main.innerHTML = '<h2>404 - Страница не найдена</h2><p>Вернуться на <a onclick="app.router(\'/\')">главную</a>.</p>';
+    },
+    
     // --- ФУНКЦИИ ВЗАИМОДЕЙСТВИЯ (SUBS, LIKES, COMMENTS, ADMIN) ---
+
+    // Голосование
+    vote: (videoId, type) => {
+        if (!app.user) return app.router('/login');
+        app.socket.emit('vote', { userId: app.user.id, videoId, type });
+    },
+
+    // Подписка/Отписка
+    sub: async (channelId) => {
+        if (!app.user) return app.router('/login');
+        const res = await fetch('/api/subscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ channelId })
+        });
+        const data = await res.json();
+        if (data.success) {
+            const btn = document.querySelector('.subscribe-btn');
+            if (btn) {
+                btn.textContent = data.subscribed ? 'Вы подписаны' : 'Подписаться';
+                btn.classList.toggle('subscribed', data.subscribed);
+            }
+        }
+    },
     
-    // ... (vote, sub, deleteVideo, adminAction, toggle18Plus - без изменений, кроме loadMe/router)
+    // Удаление видео
+    deleteVideo: async (videoId) => {
+        if (!confirm('Вы уверены, что хотите удалить это видео?')) return;
+        
+        const res = await fetch(`/api/video/${videoId}`, { method: 'DELETE' });
+        const data = await res.json();
+        
+        if (data.success) {
+            alert('Видео удалено.');
+            app.router('/channel/' + app.user.id);
+        } else {
+            alert(`Ошибка: ${data.message}`);
+        }
+    },
+
+    // Административные действия (Block, GiveSubs)
+    adminAction: async (e, action) => {
+        e.preventDefault();
+        const form = e.target;
+        const messageElement = document.getElementById(`admin${action.charAt(0).toUpperCase() + action.slice(1)}Message`);
+        messageElement.textContent = 'Обработка...';
+
+        const formData = new FormData(form);
+        const body = Object.fromEntries(formData.entries());
+
+        try {
+            const res = await fetch(`/api/admin/${action}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            const data = await res.json();
+
+            if (data.success) {
+                messageElement.textContent = `Успех: ${data.message}`;
+                form.reset();
+            } else {
+                messageElement.textContent = `Ошибка: ${data.message}`;
+            }
+        } catch (error) {
+            messageElement.textContent = `Ошибка сети/сервера: ${error.message}`;
+        }
+    },
     
+    // Переключение статуса 18+ (Admin_18Plus)
+    toggle18Plus: async (videoId) => {
+        const res = await fetch(`/api/video/toggle_18plus/${videoId}`, { method: 'POST' });
+        const data = await res.json();
+        
+        if (data.success) {
+            const btn = document.querySelector('.admin-toggle-18-btn');
+            if (btn) {
+                btn.textContent = data.is_18_plus ? 'Снять 🔞' : 'Поставить 🔞';
+            }
+        } else {
+            alert(`Ошибка: ${data.message}`);
+        }
+    },
+
     // Добавление комментария или ответа (Обновлено)
     addComment: (e, videoId) => {
         e.preventDefault();
-        const form = e.target;
+        const form = document.getElementById('commentForm');
         const text = form.commentText.value;
-        // Получаем ID родительского комментария, если установлен режим ответа
         const parentId = form.dataset.parentId ? parseInt(form.dataset.parentId) : null; 
 
         if (!text.trim()) return;
 
-        // Отправляем parentId через сокет
         app.socket.emit('comment', { userId: app.user.id, videoId, text, parentId }); 
         
-        // Сброс формы и режима ответа
-        form.commentText.value = '';
         app.cancelReply(); 
     },
     
     // Установка режима ответа на комментарий (Новая функция)
     prepareReply: (button) => {
+        if (!app.user) return app.router('/login');
+        
         const username = button.dataset.username;
         const parentId = button.dataset.commentId;
         const formSection = document.getElementById('commentFormSection');
@@ -282,7 +533,6 @@ const app = {
 
         if (!form || !textarea) return;
         
-        // Сброс предыдущего режима ответа
         app.cancelReply();
 
         // Добавляем информацию о том, кому отвечаем
@@ -291,10 +541,8 @@ const app = {
         replyInfo.innerHTML = `Ответ пользователю <strong>@${username}</strong>. <span style="cursor: pointer; color: var(--main-color);" onclick="app.cancelReply()">Отмена</span>`;
         formSection.prepend(replyInfo);
         
-        // Устанавливаем parent_id в data-атрибут формы
         form.dataset.parentId = parentId;
         
-        // Фокусируемся на поле ввода и добавляем упоминание
         textarea.value = `@${username} `;
         textarea.focus();
     },
@@ -318,7 +566,35 @@ const app = {
 
     // --- SOCKET.IO ОБРАБОТЧИКИ ---
 
-    // ... (handleUpdateVotes, handleNewVideo, handleUpdateView, handleUpdate18PlusStatus - без изменений)
+    handleUpdateVotes: (data) => {
+        if (window.location.pathname === `/video/${data.videoId}`) {
+            // Обновляем счетчики, снова запрашивая данные (менее эффективно, но проще)
+            app.loadVideo(data.videoId); 
+        }
+    },
+
+    handleNewVideo: (data) => {
+        // Здесь можно реализовать уведомление о новом видео
+        // console.log(`New video uploaded: ${data.title}`);
+    },
+
+    handleUpdateView: (data) => {
+        if (window.location.pathname === `/video/${data.videoId}`) {
+            const viewElement = document.getElementById('videoViews');
+            if (viewElement) {
+                viewElement.textContent = `${data.views} просмотров`;
+            }
+        }
+    },
+
+    handleUpdate18PlusStatus: (data) => {
+        if (window.location.pathname === `/video/${data.videoId}`) {
+            const btn = document.querySelector('.admin-toggle-18-btn');
+            if (btn) {
+                btn.textContent = data.is_18_plus ? 'Снять 🔞' : 'Поставить 🔞';
+            }
+        }
+    },
 
     // Обработка нового комментария/ответа (Обновлено)
     handleNewComment: (data) => {
@@ -330,7 +606,7 @@ const app = {
                     <div>
                         <p>
                             <strong onclick="app.router('/channel/${c.user_id}')" style="cursor: pointer;">${c.username}</strong> 
-                            <small>${new Date().toLocaleDateString()}</small>
+                            <small>${new Date(c.created_at).toLocaleDateString()}</small>
                             ${app.user ? `<span class="reply-btn" data-username="${c.username}" data-comment-id="${c.id}" onclick="app.prepareReply(this)">Ответить</span>` : ''}
                         </p>
                         <p>${c.text}</p>
@@ -343,11 +619,11 @@ const app = {
                 // Если это ответ, ищем контейнер ответов родителя
                 const repliesList = document.querySelector(`.replies-list[data-parent-id="${c.parent_id}"]`);
                 if (repliesList) {
-                    // Добавляем ответ в начало списка ответов
+                    // Добавляем ответ в конец списка ответов
                     repliesList.insertAdjacentHTML('beforeend', newCommentHtml);
                 }
             } else {
-                // Это корневой комментарий, добавляем его в основной список
+                // Это корневой комментарий, добавляем его в начало основного списка
                 const list = document.getElementById('commentsList');
                 if (list) {
                      list.insertAdjacentHTML('afterbegin', newCommentHtml);
