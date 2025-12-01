@@ -215,8 +215,10 @@ io.on('connection', (socket) => {
     });
 });
 
-app.get('/*', (req, res) => {
+// SPA Routing (используем регулярное выражение для обхода конфликта 'path-to-regexp')
+// Этот роут ловит абсолютно все запросы, которые не были обработаны предыдущими роутами.
+app.get(/^\/(.+)?$/, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
-}); 
+});
 
 server.listen(PORT, () => console.log(`FluxTube running on port ${PORT}`));
