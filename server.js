@@ -216,19 +216,35 @@ app.get('/api/video/:id', (req, res) => {
         });
     });
 });
-
 // 8. Данные канала (Профиль пользователя)
 app.get('/api/user/:id', (req, res) => {
     const channelId = req.params.id;
     const userId = req.cookies.user_id || 0;
     
     db.get(`SELECT id, username, avatar FROM users WHERE id = ?`, [channelId], (err, user) => {
+        if (err) {
+            console.error("Ошибка БД при получении пользователя:", err.message);
+            return res.status(500).json({ error: "Server error fetching user" });
+        }
         if (!user) return res.status(404).json({ user: null });
         
+        // ВАЖНО: db.all может вернуть err, но rows (videos) будет пустым массивом [], что нам подходит.
         db.all(`SELECT id, title, thumbnail, views, is_18_plus FROM videos WHERE author_id = ? ORDER BY created_at DESC`, [channelId], (err, videos) => {
+            if (err) {
+                 console.error("Ошибка БД при получении видео канала:", err.message);
+                 // В случае ошибки, возвращаем 500, но это не должно было быть причиной TypeError на фронте.
+                 return res.status(500).json({ error: "Server error fetching videos" });
+            }
+
             db.get(`SELECT COUNT(*) as subs FROM subscriptions WHERE channel_id = ?`, [channelId], (err, sc) => {
                 db.get(`SELECT COUNT(*) as is_sub FROM subscriptions WHERE subscriber_id = ? AND channel_id = ?`, [userId, channelId], (err, isSub) => {
-                    res.json({ user, videos, subs: sc.subs, is_sub: isSub.is_sub > 0 });
+                    // ГАРАНТИЯ: videos всегда является массивом (может быть пустым []).
+                    res.json({ 
+                        user, 
+                        videos: videos || [], // Добавлена защита, хотя в SQLite обычно не нужна
+                        subs: sc.subs, 
+                        is_sub: isSub.is_sub > 0 
+                    });
                 });
             });
         });

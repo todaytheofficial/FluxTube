@@ -170,46 +170,57 @@ const app = {
         `;
     },
 
-    // 3. Страница канала
-    loadChannel: async (authorId) => {
-        history.pushState(null, '', `/channel/${authorId}`);
-        const main = document.getElementById('appContent');
-        main.innerHTML = '<div class="loading-spinner"></div>';
-        
-        const res = await fetch(`/api/user/${authorId}`);
-        if(!res.ok) return main.innerHTML = '<h2>Канал не найден</h2>';
-        const data = await res.json();
+// 3. Страница канала
+loadChannel: async (authorId) => {
+    history.pushState(null, '', `/channel/${authorId}`);
+    const main = document.getElementById('appContent');
+    main.innerHTML = '<div class="loading-spinner"></div>';
+    
+    const res = await fetch(`/api/user/${authorId}`);
+    
+    // 1. Проверка, успешен ли запрос
+    if(!res.ok) {
+        // Если сервер вернул 500 или 404, обрабатываем это
+        const errorData = await res.json().catch(() => ({ error: "Неизвестная ошибка" }));
+        return main.innerHTML = `<h2>Ошибка загрузки канала: ${res.status}</h2><p>${errorData.error || 'Произошла ошибка сервера.'}</p>`;
+    }
+    
+    const data = await res.json();
+    
+    // 2. Проверка, существуют ли данные и массив видео
+    const videos = data.videos || []; // ГАРАНТИЯ: Если videos не пришло, используем пустой массив []
 
-        main.innerHTML = `
-            <div class="channel-page">
-                <div style="display:flex; flex-direction:column; align-items:center; margin-bottom:40px; text-align:center">
-                    <img style="width:100px; height:100px; border-radius:50%; object-fit:cover; margin-bottom:10px" src="${data.user.avatar}">
-                    <h1>${data.user.username}</h1>
-                    <p style="color:var(--text-muted)">${data.subs} подписчиков</p>
-                    ${app.user && app.user.id != authorId ? 
-                        `<button class="subscribe-btn ${data.is_sub ? 'subscribed' : ''}" 
-                        onclick="app.sub(${data.user.id})">
-                        ${data.is_sub ? 'Вы подписаны' : 'Подписаться'}
-                        </button>` : ''}
-                </div>
-                
-                <h3>Видео канала</h3>
-                <div class="video-grid">
-                    ${data.videos.length ? data.videos.map(v => `
-                        <div class="video-card" onclick="app.loadVideo(${v.id})">
-                            <img class="thumb" src="${v.thumbnail}">
-                            <div class="info">
-                                <div>
-                                    <h3>${v.title}</h3>
-                                    <p>${v.views} просмотров</p>
-                                </div>
+    main.innerHTML = `
+        <div class="channel-page">
+            <div style="display:flex; flex-direction:column; align-items:center; margin-bottom:40px; text-align:center">
+                <img style="width:100px; height:100px; border-radius:50%; object-fit:cover; margin-bottom:10px" src="${data.user.avatar}">
+                <h1>${data.user.username}</h1>
+                <p style="color:var(--text-muted)">${data.subs} подписчиков</p>
+                ${app.user && app.user.id != authorId ? 
+                    `<button class="subscribe-btn ${data.is_sub ? 'subscribed' : ''}" 
+                    onclick="app.sub(${data.user.id})">
+                    ${data.is_sub ? 'Вы подписаны' : 'Подписаться'}
+                    </button>` : ''}
+            </div>
+            
+            <h3>Видео канала</h3>
+            <div class="video-grid">
+                ${videos.length ? videos.map(v => `
+                    <div class="video-card" onclick="app.loadVideo(${v.id})">
+                        <img class="thumb" src="${v.thumbnail}">
+                        ${v.is_18_plus ? '<span class="age-warning">🔞 18+</span>' : ''}
+                        <div class="info">
+                            <div>
+                                <h3>${v.title}</h3>
+                                <p>${v.views} просмотров</p>
                             </div>
                         </div>
-                    `).join('') : '<p>Видео пока нет</p>'}
-                </div>
+                    </div>
+                `).join('') : '<p>Видео пока нет</p>'}
             </div>
-        `;
-    },
+        </div>
+    `;
+},
 
     // --- Обработчики форм ---
 
@@ -329,3 +340,4 @@ const app = {
 };
 
 document.addEventListener('DOMContentLoaded', app.init);
+
