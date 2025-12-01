@@ -13,18 +13,18 @@ const app = {
         app.socket.on('update_view', app.handleUpdateView);
         app.socket.on('update_18plus_status', app.handleUpdate18PlusStatus);
         
-// Загрузка данных пользователя и начальная маршрутизация
-    app.loadMe().then(app.router);
-    
-    // Обработка истории браузера для навигации
-    window.onpopstate = app.router;
+        // Загрузка данных пользователя и начальная маршрутизация
+        app.loadMe().then(app.router);
+        
+        // Обработка истории браузера для навигации
+        window.onpopstate = app.router;
 
-    // Настройка обработчиков форм (Только для элементов, которые ВСЕГДА есть в DOM)
-    // Эти элементы ДОЛЖНЫ быть в index.html
-    document.getElementById('loginForm').onsubmit = app.login;
-    document.getElementById('registerForm').onsubmit = app.register;
-    // УДАЛИТЕ ИЛИ ЗАКОММЕНТИРУЙТЕ:
-    // document.getElementById('uploadForm').onsubmit = app.uploadVideo
+        // Настройка обработчиков форм (теперь формы гарантированно присутствуют в DOM)
+        const loginForm = document.getElementById('loginForm');
+        if (loginForm) loginForm.onsubmit = app.login;
+
+        const registerForm = document.getElementById('registerForm');
+        if (registerForm) registerForm.onsubmit = app.register;
     },
     
     // --- ОСНОВНЫЕ ФУНКЦИИ АВТОРИЗАЦИИ И ЗАГРУЗКИ ---
@@ -39,25 +39,28 @@ const app = {
         if (res.ok) {
             app.user = await res.json();
             
-            loginSection.style.display = 'none';
-            userMenu.style.display = 'flex';
-            uploadBtn.style.display = 'inline-block';
+            // Проверка на null добавлена для безопасности, но после исправления HTML, они должны существовать
+            if (loginSection) loginSection.style.display = 'none';
+            if (userMenu) userMenu.style.display = 'flex';
+            if (uploadBtn) uploadBtn.style.display = 'inline-block';
+            
             document.getElementById('usernameDisplay').textContent = app.user.username;
             document.getElementById('userAvatar').src = app.user.avatar;
             
             // Проверка прав Today_Idk_New и Admin_18Plus для кнопки Admin Panel
-            if (app.user.username === 'Today_Idk_New' || app.user.username === 'Admin_18Plus') {
-                adminPanelBtn.style.display = 'block';
-            } else {
-                adminPanelBtn.style.display = 'none';
+            if (adminPanelBtn) {
+                if (app.user.username === 'Today_Idk_New' || app.user.username === 'Admin_18Plus') {
+                    adminPanelBtn.style.display = 'inline-block';
+                } else {
+                    adminPanelBtn.style.display = 'none';
+                }
             }
-
         } else {
             app.user = null;
-            loginSection.style.display = 'block';
-            userMenu.style.display = 'none';
-            uploadBtn.style.display = 'none';
-            adminPanelBtn.style.display = 'none';
+            if (loginSection) loginSection.style.display = 'flex';
+            if (userMenu) userMenu.style.display = 'none';
+            if (uploadBtn) uploadBtn.style.display = 'none';
+            if (adminPanelBtn) adminPanelBtn.style.display = 'none';
         }
     },
 
@@ -75,7 +78,8 @@ const app = {
         const data = await res.json();
         if (data.success) {
             app.loadMe().then(() => {
-                document.getElementById('loginPage').style.display = 'none';
+                const loginPage = document.getElementById('loginPage');
+                if (loginPage) loginPage.style.display = 'none';
                 app.router();
             });
         } else {
@@ -95,7 +99,8 @@ const app = {
         const data = await res.json();
         if (data.success) {
             app.loadMe().then(() => {
-                document.getElementById('registerPage').style.display = 'none';
+                const registerPage = document.getElementById('registerPage');
+                if (registerPage) registerPage.style.display = 'none';
                 app.router();
             });
         } else {
@@ -106,10 +111,16 @@ const app = {
     logout: async () => {
         await fetch('/api/logout');
         app.user = null;
-        document.getElementById('userMenu').style.display = 'none';
-        document.getElementById('loginSection').style.display = 'block';
-        document.getElementById('uploadBtn').style.display = 'none';
-        document.getElementById('adminPanelBtn').style.display = 'none';
+        const userMenu = document.getElementById('userMenu');
+        const loginSection = document.getElementById('loginSection');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const adminPanelBtn = document.getElementById('adminPanelBtn');
+        
+        if (userMenu) userMenu.style.display = 'none';
+        if (loginSection) loginSection.style.display = 'flex';
+        if (uploadBtn) uploadBtn.style.display = 'none';
+        if (adminPanelBtn) adminPanelBtn.style.display = 'none';
+        
         app.router();
     },
 
@@ -120,11 +131,12 @@ const app = {
             window.history.pushState(null, '', url);
         }
         
-        // Скрытие всех страниц
+        // Скрытие всех страниц-шаблонов
         document.querySelectorAll('.page').forEach(page => page.style.display = 'none');
         document.getElementById('appContent').style.display = 'block';
 
         const path = window.location.pathname;
+        const appContent = document.getElementById('appContent');
 
         if (path === '/' || path === '/home') {
             app.loadFeed();
@@ -137,11 +149,13 @@ const app = {
         } else if (path === '/upload') {
             app.loadUploadPage();
         } else if (path === '/login') {
-            document.getElementById('loginPage').style.display = 'flex';
-            document.getElementById('appContent').style.display = 'none';
+            const loginPage = document.getElementById('loginPage');
+            if (loginPage) loginPage.style.display = 'flex';
+            appContent.style.display = 'none';
         } else if (path === '/register') {
-            document.getElementById('registerPage').style.display = 'flex';
-            document.getElementById('appContent').style.display = 'none';
+            const registerPage = document.getElementById('registerPage');
+            if (registerPage) registerPage.style.display = 'flex';
+            appContent.style.display = 'none';
         } else if (path === '/admin') {
             app.loadAdminPanel();
         } else {
@@ -186,7 +200,7 @@ const app = {
     loadUploadPage: () => {
         if (!app.user) return app.router('/login');
         history.pushState(null, '', '/upload');
-        // Предполагается, что на странице есть скрытый div#uploadPage
+        
         const uploadPageContent = document.getElementById('uploadPage');
         if (uploadPageContent) {
             document.getElementById('appContent').innerHTML = uploadPageContent.innerHTML;
@@ -194,7 +208,7 @@ const app = {
             // Важно: перепривязка обработчика после вставки HTML
             const form = document.getElementById('uploadFormContent');
             if (form) {
-                form.onsubmit = app.uploadVideo;
+                form.onsubmit = app.uploadVideo; 
             } else {
                  document.getElementById('appContent').innerHTML = '<h2>Ошибка загрузки: Не найдена форма загрузки (uploadFormContent).</h2>';
             }
@@ -431,8 +445,7 @@ const app = {
                  btn.textContent = data.subscribed ? 'Вы подписаны' : 'Подписаться';
                  btn.classList.toggle('subscribed', data.subscribed);
             }
-            // Перезагрузка данных, чтобы обновить счетчик подписчиков
-            // Не оптимально, но просто для обновления счетчика:
+            // Обновление страницы для отображения актуального счетчика подписчиков
             app.router(window.location.pathname); 
         }
     },
@@ -463,7 +476,7 @@ const app = {
         if (action === 'block') {
             const userId = document.getElementById('blockUserId').value;
             if (!userId) return statusEl.textContent = 'Введите ID пользователя!';
-            if (!confirm(`Вы уверены, что хотите ЗАБЛОКИРОВАТЬ (удалить) пользователя ID ${userId}?`)) return statusEl.textContent = '';
+            if (!confirm(`Вы уверены, что хотите ЗАБЛОКИРОВАТЬ (удалить) пользователя ID ${userId}?`)) return statusEl.textContent = 'Отменено.';
             url = '/api/admin/block';
             body = { userId: userId };
         } else if (action === 'givesubs') {
@@ -522,8 +535,10 @@ const app = {
             const res = await fetch(`/api/video/${data.videoId}`);
             const updatedData = await res.json();
             if (updatedData && updatedData.video) {
-                document.getElementById('likesCount').textContent = updatedData.video.likes;
-                document.getElementById('dislikesCount').textContent = updatedData.video.dislikes;
+                const likes = document.getElementById('likesCount');
+                const dislikes = document.getElementById('dislikesCount');
+                if (likes) likes.textContent = updatedData.video.likes;
+                if (dislikes) dislikes.textContent = updatedData.video.dislikes;
             }
         }
     },
@@ -548,7 +563,7 @@ const app = {
     },
 
     handleNewVideo: (data) => {
-        // Уведомление о новом видео (для будущей реализации уведомлений)
+        // Уведомление о новом видео
         console.log(`Новое видео опубликовано: ${data.title}`);
     },
     
@@ -561,9 +576,7 @@ const app = {
     },
 
     handleUpdate18PlusStatus: (data) => {
-        // Логика для обновления элементов 18+ без полной перезагрузки (например, значок 🔞 на карточке)
         console.log(`Видео ${data.videoId} изменило статус 18+: ${data.is_18_plus}`);
-        // В текущей реализации мы полагаемся на app.router() при успешном вызове toggle18Plus
     }
 };
 

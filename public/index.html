@@ -11,7 +11,7 @@
 <body>
     
     <header>
-        <div class="logo-container" onclick="app.loadFeed()">
+        <div class="logo-container" onclick="app.router('/')">
             <svg class="logo-icon" viewBox="0 0 40 40" fill="none">
                 <path d="M20 4L4 12L20 20L36 12L20 4Z" fill="var(--primary)"/>
                 <path d="M4 12V28L20 36V20L4 12Z" fill="var(--primary-dark)"/>
@@ -24,57 +24,76 @@
             <input type="text" id="searchInput" placeholder="Поиск...">
         </div>
 
-        <div id="userMenu">
-            </div>
-    </header>
+        <div id="loginSection" class="user-controls" style="display:none;">
+            <button onclick="app.router('/login')">Вход</button>
+            <button onclick="app.router('/register')">Регистрация</button>
+        </div>
+
+        <button id="uploadBtn" onclick="app.router('/upload')" style="display:none;">Загрузить ⬆️</button>
+        <button id="adminPanelBtn" onclick="app.router('/admin')" style="display:none;">Admin Panel 🛠️</button>
+
+        <div id="userMenu" class="user-controls" style="display:none;">
+            <span id="usernameDisplay" style="margin-right: 10px;"></span>
+            <img id="userAvatar" src="/img/default_avatar.svg" class="avatar-small" onclick="app.router('/channel/' + app.user.id)">
+            <button onclick="app.logout()">Выход</button>
+        </div>
+        </header>
 
     <main id="appContent">
         <div class="loading-spinner"></div>
     </main>
 
-    <div id="modalOverlay" class="hidden">
-        
-        <div id="authModal" class="modal hidden">
-            <button class="close-btn" onclick="app.closeModal()">✕</button>
-            <h2 id="modalTitle">Вход в систему</h2>
-            <form id="authForm">
-                <input type="text" name="username" placeholder="Имя пользователя" required autocomplete="username">
-                <input type="password" name="password" placeholder="Пароль" required autocomplete="current-password">
-                
-                <div id="regFields" class="hidden">
-                    <label class="file-upload-label">
-                        <span>Выберите аватарку</span>
-                        <input type="file" name="avatar" accept="image/*">
-                    </label>
-                </div>
-
-                <button type="submit" class="submit-btn">Продолжить</button>
-            </form>
+    <div id="loginPage" class="page auth-page" style="display:none;">
+        <form id="loginForm" class="auth-form">
+            <h2>Вход в систему</h2>
+            <input type="text" name="username" placeholder="Имя пользователя" required autocomplete="username">
+            <input type="password" name="password" placeholder="Пароль" required autocomplete="current-password">
+            <button type="submit" class="submit-btn">Войти</button>
             <div class="modal-footer">
-                <span id="toggleAuth" onclick="app.toggleAuthMode()">Нет аккаунта? Зарегистрироваться</span>
+                <span onclick="app.router('/register')">Нет аккаунта? Зарегистрироваться</span>
             </div>
-        </div>
+        </form>
+    </div>
 
-        <div id="uploadModal" class="modal hidden">
-            <button class="close-btn" onclick="app.closeModal()">✕</button>
+    <div id="registerPage" class="page auth-page" style="display:none;">
+        <form id="registerForm" class="auth-form">
+            <h2>Регистрация</h2>
+            <input type="text" name="username" placeholder="Имя пользователя" required autocomplete="username">
+            <input type="password" name="password" placeholder="Пароль" required autocomplete="new-password">
+            <label class="file-upload-label">
+                <span>Выберите аватарку (необязательно)</span>
+                <input type="file" name="avatar" accept="image/*">
+            </label>
+            <button type="submit" class="submit-btn">Создать аккаунт</button>
+            <div class="modal-footer">
+                <span onclick="app.router('/login')">Уже есть аккаунт? Войти</span>
+            </div>
+        </form>
+    </div>
+    
+    <div id="uploadPage" class="page" style="display:none;">
+        <form id="uploadFormContent" class="upload-form">
             <h2>Новое видео</h2>
-            <form id="uploadForm">
-                <input type="text" name="title" placeholder="Название видео" required>
-                <textarea name="description" placeholder="Описание (о чем это видео?)"></textarea>
-                
-                <label class="file-upload-label">
-                    <span>📁 Видео файл (.mp4)</span>
-                    <input type="file" name="video" accept="video/*" required>
-                </label>
+            <input type="text" name="title" placeholder="Название видео" required>
+            <textarea name="description" placeholder="Описание (о чем это видео?)"></textarea>
+            
+            <label class="file-upload-label">
+                <span>📁 Видео файл (.mp4)</span>
+                <input type="file" name="video" accept="video/*" required>
+            </label>
 
-                <label class="file-upload-label">
-                    <span>🖼️ Обложка (превью)</span>
-                    <input type="file" name="thumbnail" accept="image/*" required>
-                </label>
+            <label class="file-upload-label">
+                <span>🖼️ Обложка (превью)</span>
+                <input type="file" name="thumbnail" accept="image/*" required>
+            </label>
+            
+            <label class="checkbox-container">
+                <input type="checkbox" name="is_18_plus"> 18+ контент
+            </label>
 
-                <button type="submit" class="submit-btn">Опубликовать</button>
-            </form>
-        </div>
+            <button type="submit" class="submit-btn">Опубликовать</button>
+            <p id="uploadStatus"></p>
+        </form>
     </div>
 
     <script src="/js/script.js"></script>
