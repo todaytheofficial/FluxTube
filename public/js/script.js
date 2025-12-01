@@ -13,17 +13,18 @@ const app = {
         app.socket.on('update_view', app.handleUpdateView);
         app.socket.on('update_18plus_status', app.handleUpdate18PlusStatus);
         
-        // Загрузка данных пользователя и начальная маршрутизация
-        app.loadMe().then(app.router);
-        
-        // Обработка истории браузера для навигации
-        window.onpopstate = app.router;
+// Загрузка данных пользователя и начальная маршрутизация
+    app.loadMe().then(app.router);
+    
+    // Обработка истории браузера для навигации
+    window.onpopstate = app.router;
 
-        // Настройка обработчиков форм
-        document.getElementById('loginForm').onsubmit = app.login;
-        document.getElementById('registerForm').onsubmit = app.register;
-        // Убедимся, что uploadForm существует на странице загрузки, когда она загружена
-        // document.getElementById('uploadForm').onsubmit = app.uploadVideo; // Лучше привязать в loadUploadPage
+    // Настройка обработчиков форм (Только для элементов, которые ВСЕГДА есть в DOM)
+    // Эти элементы ДОЛЖНЫ быть в index.html
+    document.getElementById('loginForm').onsubmit = app.login;
+    document.getElementById('registerForm').onsubmit = app.register;
+    // УДАЛИТЕ ИЛИ ЗАКОММЕНТИРУЙТЕ:
+    // document.getElementById('uploadForm').onsubmit = app.uploadVideo
     },
     
     // --- ОСНОВНЫЕ ФУНКЦИИ АВТОРИЗАЦИИ И ЗАГРУЗКИ ---
