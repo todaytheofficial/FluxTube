@@ -92,7 +92,7 @@ const setupInitialAccount = async () => {
             }
         });
         
-         db.get(`SELECT COUNT(*) as count FROM users WHERE username = ?`, [adminUsername], (err, row) => {
+          db.get(`SELECT COUNT(*) as count FROM users WHERE username = ?`, [adminUsername], (err, row) => {
             if (row && row.count === 0) {
                  db.run(`INSERT INTO users (username, password, avatar) VALUES (?, ?, ?)`, 
                     [adminUsername, adminPassword, '/img/default_admin.svg'], 
@@ -123,10 +123,26 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// --- ПРОВЕРКА АВТОРИЗАЦИИ ---
+// --- ПРОВЕРКА АВТОРИЗАЦИИ И АДМИН ПРАВ ---
+
+// Получение информации о пользователе из БД и прикрепление к req.user
 const checkAuth = (req, res, next) => {
     if (!req.cookies.user_id) return res.status(401).json({ error: 'Нужна авторизация' });
-    req.userId = req.cookies.user_id;
+    
+    db.get(`SELECT id, username, avatar FROM users WHERE id = ?`, [req.cookies.user_id], (err, user) => {
+        if (err || !user) return res.status(401).json({ error: 'Недействительная сессия' });
+        req.user = user;
+        req.userId = user.id;
+        next();
+    });
+};
+
+// Проверка административных прав
+const checkAdminMiddleware = (req, res, next) => {
+    // req.user устанавливается в checkAuth
+    if (!req.user || (req.user.username !== 'Today_Idk_New' && req.user.username !== 'Admin_18Plus')) {
+        return res.status(403).json({ success: false, message: 'Доступ запрещен. Требуются права администратора.' });
+    }
     next();
 };
 
@@ -179,7 +195,8 @@ app.get('/api/logout', (req, res) => {
 
 // 4. Получение данных текущего пользователя
 app.get('/api/me', checkAuth, (req, res) => {
-    db.get(`SELECT id, username, avatar FROM users WHERE id = ?`, [req.userId], (err, row) => res.json(row));
+    // req.user уже содержит нужные данные, установленные в checkAuth
+    res.json(req.user);
 });
 
 // 5. Загрузка видео
@@ -260,10 +277,9 @@ app.get('/api/user/:id', (req, res) => {
     });
 });
 
-// 9. Подписка/Отписка (РАЗРЕШЕНО подписываться на себя для накрутки)
+// 9. Подписка/Отписка
 app.post('/api/subscribe', checkAuth, (req, res) => {
     const { channelId } = req.body;
-    // УДАЛЕНО: if (req.userId == channelId) return res.json({ success: false, message: "Нельзя подписаться на себя" });
 
     db.get(`SELECT * FROM subscriptions WHERE subscriber_id = ? AND channel_id = ?`, [req.userId, channelId], (err, row) => {
         if (row) {
@@ -306,28 +322,102 @@ app.delete('/api/video/:id', checkAuth, (req, res) => {
 });
 
 // 11. Переключение статуса 18+ (Только для Admin_18Plus)
-app.post('/api/video/toggle_18plus/:id', checkAuth, async (req, res) => {
+app.post('/api/video/toggle_18plus/:id', checkAuth, checkAdminMiddleware, async (req, res) => {
     const videoId = req.params.id;
-    const userId = req.userId;
     
-    // Проверка, является ли пользователь Admin_18Plus
-    db.get(`SELECT username FROM users WHERE id = ?`, [userId], (err, user) => {
-        if (err || !user || user.username !== 'Admin_18Plus') {
-             return res.status(403).json({ success: false, message: "Только Admin_18Plus может это делать" });
-        }
+    // Проверка прав Admin_18Plus уже выполнена в checkAdminMiddleware
+    if (req.user.username !== 'Admin_18Plus') {
+        return res.status(403).json({ success: false, message: "Только Admin_18Plus может это делать" });
+    }
+    
+    db.get(`SELECT is_18_plus FROM videos WHERE id = ?`, [videoId], (err, video) => {
+        if (!video) return res.status(404).json({ success: false, message: "Видео не найдено" });
         
-        db.get(`SELECT is_18_plus FROM videos WHERE id = ?`, [videoId], (err, video) => {
-            if (!video) return res.status(404).json({ success: false, message: "Видео не найдено" });
-            
-            const newState = video.is_18_plus === 1 ? 0 : 1;
-            
-            db.run(`UPDATE videos SET is_18_plus = ? WHERE id = ?`, [newState, videoId], (err) => {
-                if (err) return res.status(500).json({ success: false, message: "Ошибка обновления БД" });
-                res.json({ success: true, is_18_plus: newState });
-                io.emit('update_18plus_status', { videoId: videoId, is_18_plus: newState });
-            });
+        const newState = video.is_18_plus === 1 ? 0 : 1;
+        
+        db.run(`UPDATE videos SET is_18_plus = ? WHERE id = ?`, [newState, videoId], (err) => {
+            if (err) return res.status(500).json({ success: false, message: "Ошибка обновления БД" });
+            res.json({ success: true, is_18_plus: newState });
+            io.emit('update_18plus_status', { videoId: videoId, is_18_plus: newState });
         });
     });
+});
+
+// 12. Административное удаление пользователя (Block)
+app.post('/api/admin/block', checkAuth, checkAdminMiddleware, async (req, res) => {
+    const { userId } = req.body;
+    const targetUserId = parseInt(userId);
+
+    if (isNaN(targetUserId) || targetUserId <= 0) {
+        return res.status(400).json({ success: false, message: 'Неверный ID пользователя.' });
+    }
+    
+    // Защита от удаления собственного аккаунта
+    if (targetUserId === req.userId) {
+        return res.status(403).json({ success: false, message: 'Нельзя удалить собственный аккаунт через эту панель.' });
+    }
+
+    try {
+        // Удаляем пользователя и все связанные данные (видео, подписки, голоса, комментарии)
+        db.run('DELETE FROM users WHERE id = ?', [targetUserId]);
+        db.run('DELETE FROM videos WHERE author_id = ?', [targetUserId]);
+        db.run('DELETE FROM subscriptions WHERE subscriber_id = ? OR channel_id = ?', [targetUserId, targetUserId]);
+        db.run('DELETE FROM votes WHERE user_id = ?', [targetUserId]);
+        db.run('DELETE FROM comments WHERE user_id = ?', [targetUserId]);
+
+        return res.json({ 
+            success: true, 
+            message: `Пользователь ID ${targetUserId} и все связанные данные удалены.` 
+        });
+        
+    } catch (error) {
+        console.error('Ошибка блокировки пользователя:', error);
+        return res.status(500).json({ success: false, message: 'Ошибка сервера при блокировке.' });
+    }
+});
+
+
+// 13. Административная накрутка подписчиков (GiveSubs)
+app.post('/api/admin/givesubs', checkAuth, checkAdminMiddleware, async (req, res) => {
+    const { channelId, count } = req.body;
+    
+    const parsedChannelId = parseInt(channelId);
+    const parsedCount = parseInt(count);
+
+    if (isNaN(parsedChannelId) || parsedChannelId <= 0 || isNaN(parsedCount) || parsedCount < 1 || parsedCount > 100) {
+        return res.status(400).json({ success: false, message: 'Неверные параметры ID канала или количества (1-100).' });
+    }
+    
+    // Накручиваем подписки, вставляя их от фиктивных пользователей (ID < 0)
+    try {
+        let successCount = 0;
+        for (let i = 1; i <= parsedCount; i++) {
+            // Используем отрицательные ID для фейковых подписчиков
+            const fakeSubscriberId = -1 * (Date.now() + i + parsedChannelId); 
+            
+            // Вставляем, игнорируя возможные конфликты по PK (хотя с отрицательными ID это маловероятно)
+            db.run(`INSERT OR IGNORE INTO subscriptions (subscriber_id, channel_id) VALUES (?, ?)`, 
+                [fakeSubscriberId, parsedChannelId], 
+                function(err) {
+                    if (!err && this.changes > 0) {
+                        successCount++;
+                    }
+                }
+            );
+        }
+        
+        // Пауза, чтобы дать циклу завершиться
+        await new Promise(resolve => setTimeout(resolve, 100)); 
+
+        return res.json({ 
+            success: true, 
+            message: `Успешно накручено ${parsedCount} фиктивных подписчиков для канала ID ${parsedChannelId}.` 
+        });
+        
+    } catch (error) {
+        console.error('Ошибка накрутки подписок:', error);
+        return res.status(500).json({ success: false, message: 'Ошибка сервера при накрутке подписок.' });
+    }
 });
 
 
