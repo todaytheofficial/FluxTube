@@ -14,7 +14,7 @@
     "bcrypt": "^6.0.0",
     "cookie-parser": "^1.4.7",
     "express": "^5.1.0",
-    "moongoose": "^0.0.5",
+    "mongoose": "^8.x.x",
     "multer": "^2.0.2",
     "socket.io": "^4.8.1",
     "sqlite3": "^5.1.7"
