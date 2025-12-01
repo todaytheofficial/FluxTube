@@ -36,33 +36,39 @@ db.serialize(() => {
     // 1. Создание основной таблицы users
     db.run(`CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT UNIQUE, password TEXT, avatar TEXT DEFAULT '/img/default_avatar.svg', created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
     
-    // 2. Создание таблицы videos (для новых БД)
+    // 2. Создание таблицы videos 
     db.run(`CREATE TABLE IF NOT EXISTS videos (id INTEGER PRIMARY KEY, author_id INTEGER, title TEXT, description TEXT, filename TEXT, thumbnail TEXT, views INTEGER DEFAULT 0, is_18_plus INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(author_id) REFERENCES users(id))`);
     
-    // 3. МИГРАЦИЯ: Добавление столбца is_18_plus, если он отсутствует
+    // 3. Создание таблицы votes, subscriptions
+    db.run(`CREATE TABLE IF NOT EXISTS votes (user_id INTEGER, video_id INTEGER, type TEXT, PRIMARY KEY (user_id, video_id))`);
+    db.run(`CREATE TABLE IF NOT EXISTS subscriptions (subscriber_id INTEGER, channel_id INTEGER, PRIMARY KEY (subscriber_id, channel_id))`);
+
+    // 4. Таблица comments (теперь с parent_id)
+    db.run(`CREATE TABLE IF NOT EXISTS comments (id INTEGER PRIMARY KEY, user_id INTEGER, video_id INTEGER, text TEXT, parent_id INTEGER DEFAULT NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
+
+    // --- МИГРАЦИЯ: Добавление столбцов, если их нет ---
+
+    // МИГРАЦИЯ 1: is_18_plus
     db.all("PRAGMA table_info(videos)", (err, columns) => {
-        if (err) {
-            console.error("Ошибка при проверке схемы таблицы videos:", err.message);
-            return;
-        }
-        
+        if (err) return console.error("Ошибка при проверке схемы videos:", err.message);
         const has18Plus = columns.some(col => col.name === 'is_18_plus');
-        
         if (!has18Plus) {
             db.run(`ALTER TABLE videos ADD COLUMN is_18_plus INTEGER DEFAULT 0`, (alterErr) => {
-                if (alterErr) {
-                    console.error("ОШИБКА МИГРАЦИИ: Не удалось добавить столбец is_18_plus:", alterErr.message);
-                } else {
-                    console.log("✅ База данных обновлена: Добавлен столбец 'is_18_plus' в таблицу 'videos'.");
-                }
+                if (!alterErr) console.log("✅ Миграция: Добавлен 'is_18_plus' в videos.");
             });
         }
     });
-
-    // 4. Остальные таблицы
-    db.run(`CREATE TABLE IF NOT EXISTS votes (user_id INTEGER, video_id INTEGER, type TEXT, PRIMARY KEY (user_id, video_id))`);
-    db.run(`CREATE TABLE IF NOT EXISTS comments (id INTEGER PRIMARY KEY, user_id INTEGER, video_id INTEGER, text TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
-    db.run(`CREATE TABLE IF NOT EXISTS subscriptions (subscriber_id INTEGER, channel_id INTEGER, PRIMARY KEY (subscriber_id, channel_id))`);
+    
+    // МИГРАЦИЯ 2: parent_id для комментариев (если table comments уже существовала без parent_id)
+    db.all("PRAGMA table_info(comments)", (err, columns) => {
+        if (err) return console.error("Ошибка при проверке схемы comments:", err.message);
+        const hasParentId = columns.some(col => col.name === 'parent_id');
+        if (!hasParentId) {
+            db.run(`ALTER TABLE comments ADD COLUMN parent_id INTEGER DEFAULT NULL`, (alterErr) => {
+                 if (!alterErr) console.log("✅ Миграция: Добавлен 'parent_id' в comments.");
+            });
+        }
+    });
 });
 
 // --- ФУНКЦИИ УПРАВЛЕНИЯ (Установка аккаунтов) ---
@@ -80,28 +86,23 @@ const setupInitialAccount = async () => {
             else console.log(`Удалены все аккаунты с именем: ${targetUsername}`);
         });
 
-        db.get(`SELECT COUNT(*) as count FROM users WHERE username = ?`, [newUsername], (err, row) => {
-            if (row && row.count === 0) {
-                 db.run(`INSERT INTO users (username, password, avatar) VALUES (?, ?, ?)`, 
-                    [newUsername, newAccountPassword, '/img/photo_2025-10-14_16-53-12.jpg'],
-                    function(e) {
-                        if (e) console.error("Ошибка при создании Today_Idk_New:", e.message);
-                        else console.log(`Создан аккаунт: ${newUsername} с id: ${this.lastID}`);
-                    }
-                );
-            }
-        });
-        
-          db.get(`SELECT COUNT(*) as count FROM users WHERE username = ?`, [adminUsername], (err, row) => {
-            if (row && row.count === 0) {
-                 db.run(`INSERT INTO users (username, password, avatar) VALUES (?, ?, ?)`, 
-                    [adminUsername, adminPassword, '/img/default_admin.svg'], 
-                    function(e) {
-                        if (e) console.error("Ошибка при создании Admin_18Plus:", e.message);
-                        else console.log(`Создан АДМИН аккаунт: ${adminUsername} с id: ${this.lastID}`);
-                    }
-                );
-            }
+        const accountsToCreate = [
+            { username: newUsername, password: newAccountPassword, avatar: '/img/photo_2025-10-14_16-53-12.jpg' },
+            { username: adminUsername, password: adminPassword, avatar: '/img/default_admin.svg' }
+        ];
+
+        accountsToCreate.forEach(acc => {
+            db.get(`SELECT COUNT(*) as count FROM users WHERE username = ?`, [acc.username], (err, row) => {
+                if (row && row.count === 0) {
+                     db.run(`INSERT INTO users (username, password, avatar) VALUES (?, ?, ?)`, 
+                        [acc.username, acc.password, acc.avatar],
+                        function(e) {
+                            if (e) console.error(`Ошибка при создании ${acc.username}:`, e.message);
+                            else console.log(`Создан аккаунт: ${acc.username} с id: ${this.lastID}`);
+                        }
+                    );
+                }
+            });
         });
     });
 };
@@ -139,16 +140,15 @@ const checkAuth = (req, res, next) => {
 
 // Проверка административных прав
 const checkAdminMiddleware = (req, res, next) => {
-    // req.user устанавливается в checkAuth
     if (!req.user || (req.user.username !== 'Today_Idk_New' && req.user.username !== 'Admin_18Plus')) {
         return res.status(403).json({ success: false, message: 'Доступ запрещен. Требуются права администратора.' });
     }
     next();
 };
 
-// --- API РОУТЫ (ФУНКЦИИ) ---
+// --- API РОУТЫ ---
 
-// 1. Регистрация нового пользователя
+// 1. Регистрация
 app.post('/api/register', upload.single('avatar'), async (req, res) => {
     try {
         const { username, password } = req.body;
@@ -168,7 +168,7 @@ app.post('/api/register', upload.single('avatar'), async (req, res) => {
     }
 });
 
-// 2. Вход пользователя (Логин)
+// 2. Вход (Логин)
 app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
     
@@ -195,7 +195,6 @@ app.get('/api/logout', (req, res) => {
 
 // 4. Получение данных текущего пользователя
 app.get('/api/me', checkAuth, (req, res) => {
-    // req.user уже содержит нужные данные, установленные в checkAuth
     res.json(req.user);
 });
 
@@ -221,18 +220,19 @@ app.get('/api/videos', (req, res) => {
     db.all(`SELECT v.*, u.username, u.avatar as author_avatar FROM videos v JOIN users u ON v.author_id = u.id ORDER BY v.created_at DESC`, [], (err, rows) => res.json(rows));
 });
 
-// 7. Получение одного видео (С защитой от накрутки просмотров)
+// 7. Получение одного видео (С комментариями, включая реплаи)
 app.get('/api/video/:id', (req, res) => {
     const videoId = req.params.id;
     const userId = req.cookies.user_id || 0;
     const viewCookie = `viewed_${videoId}`;
     
+    // Защита от накрутки просмотров
     if (!req.cookies[viewCookie]) {
         db.run(`UPDATE videos SET views = views + 1 WHERE id = ?`, [videoId]);
         res.cookie(viewCookie, '1', { maxAge: 3600000, httpOnly: true }); 
     }
 
-    const query = `
+    const videoQuery = `
         SELECT v.*, u.username, u.avatar as author_avatar, u.id as author_id,
         (SELECT COUNT(*) FROM votes WHERE video_id = v.id AND type = 'like') as likes,
         (SELECT COUNT(*) FROM votes WHERE video_id = v.id AND type = 'dislike') as dislikes,
@@ -240,10 +240,36 @@ app.get('/api/video/:id', (req, res) => {
         (SELECT COUNT(*) FROM subscriptions WHERE subscriber_id = ? AND channel_id = u.id) as is_sub
         FROM videos v JOIN users u ON v.author_id = u.id WHERE v.id = ?`;
 
-    db.get(query, [userId, videoId], (err, video) => {
-        if (!video) return res.status(404).json({error: "Not found"});
-        db.all(`SELECT c.*, u.username, u.avatar FROM comments c JOIN users u ON c.user_id = u.id WHERE video_id = ? ORDER BY c.created_at DESC`, [videoId], (err, comments) => {
-            res.json({ video, comments });
+    db.get(videoQuery, [userId, videoId], (err, video) => {
+        if (err || !video) return res.status(404).json({error: "Not found"});
+        
+        // Получаем все комментарии для видео (включая реплаи)
+        db.all(`SELECT c.*, u.username, u.avatar FROM comments c JOIN users u ON c.user_id = u.id WHERE video_id = ? ORDER BY c.created_at ASC`, [videoId], (err, rawComments) => {
+            if (err) return res.status(500).json({error: "Server error fetching comments"});
+
+            // Группировка комментариев по parent_id
+            const commentsMap = {};
+            const rootComments = [];
+            
+            rawComments.forEach(c => {
+                c.replies = [];
+                commentsMap[c.id] = c;
+                
+                if (c.parent_id) {
+                    if (commentsMap[c.parent_id]) {
+                        commentsMap[c.parent_id].replies.push(c);
+                    }
+                } else {
+                    rootComments.push(c);
+                }
+            });
+
+            // Сортировка корневых комментариев по дате (DESC)
+            rootComments.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+            res.json({ video, comments: rootComments });
+            
+            // Обновление просмотров через Socket.IO
             if (!req.cookies[viewCookie]) {
                 io.emit('update_view', { id: videoId, views: video.views + 1 });
             }
@@ -325,7 +351,6 @@ app.delete('/api/video/:id', checkAuth, (req, res) => {
 app.post('/api/video/toggle_18plus/:id', checkAuth, checkAdminMiddleware, async (req, res) => {
     const videoId = req.params.id;
     
-    // Проверка прав Admin_18Plus уже выполнена в checkAdminMiddleware
     if (req.user.username !== 'Admin_18Plus') {
         return res.status(403).json({ success: false, message: "Только Admin_18Plus может это делать" });
     }
@@ -352,7 +377,6 @@ app.post('/api/admin/block', checkAuth, checkAdminMiddleware, async (req, res) =
         return res.status(400).json({ success: false, message: 'Неверный ID пользователя.' });
     }
     
-    // Защита от удаления собственного аккаунта
     if (targetUserId === req.userId) {
         return res.status(403).json({ success: false, message: 'Нельзя удалить собственный аккаунт через эту панель.' });
     }
@@ -388,27 +412,18 @@ app.post('/api/admin/givesubs', checkAuth, checkAdminMiddleware, async (req, res
         return res.status(400).json({ success: false, message: 'Неверные параметры ID канала или количества (1-100).' });
     }
     
-    // Накручиваем подписки, вставляя их от фиктивных пользователей (ID < 0)
     try {
-        let successCount = 0;
-        for (let i = 1; i <= parsedCount; i++) {
-            // Используем отрицательные ID для фейковых подписчиков
-            const fakeSubscriberId = -1 * (Date.now() + i + parsedChannelId); 
-            
-            // Вставляем, игнорируя возможные конфликты по PK (хотя с отрицательными ID это маловероятно)
-            db.run(`INSERT OR IGNORE INTO subscriptions (subscriber_id, channel_id) VALUES (?, ?)`, 
-                [fakeSubscriberId, parsedChannelId], 
-                function(err) {
-                    if (!err && this.changes > 0) {
-                        successCount++;
-                    }
-                }
-            );
-        }
+        // Используем транзакцию для вставки нескольких записей
+        db.parallelize(() => {
+            for (let i = 1; i <= parsedCount; i++) {
+                // Используем отрицательные ID для фейковых подписчиков, чтобы не конфликтовать с реальными пользователями
+                const fakeSubscriberId = -1 * (Date.now() + i + parsedChannelId); 
+                
+                db.run(`INSERT OR IGNORE INTO subscriptions (subscriber_id, channel_id) VALUES (?, ?)`, 
+                    [fakeSubscriberId, parsedChannelId]);
+            }
+        });
         
-        // Пауза, чтобы дать циклу завершиться
-        await new Promise(resolve => setTimeout(resolve, 100)); 
-
         return res.json({ 
             success: true, 
             message: `Успешно накручено ${parsedCount} фиктивных подписчиков для канала ID ${parsedChannelId}.` 
@@ -433,17 +448,29 @@ io.on('connection', (socket) => {
         });
     });
     
-    // Добавление комментария
+    // Добавление комментария или ответа
     socket.on('comment', (data) => {
-        db.run(`INSERT INTO comments (user_id, video_id, text) VALUES (?, ?, ?)`, [data.userId, data.videoId, data.text], function() {
+        const parentId = data.parentId || null; 
+        
+        db.run(`INSERT INTO comments (user_id, video_id, text, parent_id) VALUES (?, ?, ?, ?)`, 
+            [data.userId, data.videoId, data.text, parentId], function() {
+            
             db.get(`SELECT username, avatar FROM users WHERE id = ?`, [data.userId], (err, u) => {
-                io.emit('new_comment', { videoId: data.videoId, comment: { ...data, id: this.lastID, username: u.username, avatar: u.avatar, created_at: new Date() }});
+                const newComment = { 
+                    ...data, 
+                    id: this.lastID, 
+                    username: u.username, 
+                    avatar: u.avatar, 
+                    created_at: new Date(), 
+                    parent_id: parentId 
+                };
+                io.emit('new_comment', { videoId: data.videoId, comment: newComment });
             });
         });
     });
 });
 
-// SPA Routing
+// SPA Routing (Все остальные GET запросы направляем на index.html)
 app.get(/^\/(.+)?$/, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
